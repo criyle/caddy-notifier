@@ -38,6 +38,10 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 3. Do we allow multiple connection to use the same credential? (maybe from different page, or consolidate via web worker)
 4. Do we want to limit the rate of sending out events? Due to event fan-out nature, there must be write-amplification effect. In this case, do we consider certain event have higher priority or certain event could be dropped when rate limited.
 
+### Packages
+
+- [gorilla/websocket](https://github.com/gorilla/websocket) will be the key package to upgrade incoming and outbound connections, for its ease of use and reliability. Although [nbio](https://github.com/lesismal/nbio) claimed to be able to handle 1 M connections with non-blocking strategies. It needs special listener, which is essentially incompatible with the Caddy setup.
+
 ### Protocol
 
 #### subscriber to caddy-notifier

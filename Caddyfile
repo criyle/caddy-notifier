@@ -1,0 +1,3 @@
+:6080 {
+	websocket_notifier "localhost:6081"
+}
