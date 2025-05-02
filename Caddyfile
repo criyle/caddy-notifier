@@ -1,3 +1,10 @@
 :6080 {
-	websocket_notifier "localhost:6081"
+	websocket_notifier /ws "ws://localhost:6081/ws" {
+		write_wait 10s
+		pong_wait 60s
+		ping_interval 50s
+		max_message_size 256k # max incoming message size from subscriber
+		chan_size 16
+		recovery_wait 5s
+	}
 }

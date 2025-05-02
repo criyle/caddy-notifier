@@ -30,6 +30,12 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 1. When subscriber disconnected from the notifier, it needs to re-subscribe all channels needed, to eliminate requirement of session storage (stateful session)
 2. For subscriber (? maybe certain optional parameter `after` can be added to receive buffered message. How it defines? If timestamp, we need to ensure time sync, If message id, we need to ensure it incremental correctly. Or we just send all buffered message and let subscriber to deduplicate)
 3. ~~(?) The channel name could be in hierarchy structure like `submission/domain_id`. If subscriber subscribes a prefix like `submission` (?all=1), it receives events on `submission` and all child channels. (? or the publisher just publish events with different channel)~~ (consider attribute match or other techniques later)
+4. Metrics ?
+   1. Number of message sent
+   2. number of subscribe event
+   3. current connection count
+   4. current channel count
+   5. upstream status
 
 ### Safety Considerations
 
@@ -37,10 +43,27 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 2. Maybe need to limit the number of channel single connection can connect to
 3. Do we allow multiple connection to use the same credential? (maybe from different page, or consolidate via web worker)
 4. Do we want to limit the rate of sending out events? Due to event fan-out nature, there must be write-amplification effect. In this case, do we consider certain event have higher priority or certain event could be dropped when rate limited.
+5. Do we want to limit the subscribe rate for single connection?
+6. Do we want to limit the number of channels in single request?
 
 ### Packages
 
 - [gorilla/websocket](https://github.com/gorilla/websocket) will be the key package to upgrade incoming and outbound connections, for its ease of use and reliability. Although [nbio](https://github.com/lesismal/nbio) claimed to be able to handle 1 M connections with non-blocking strategies. It needs special listener, which is essentially incompatible with the Caddy setup.
+
+### Caddyfile
+
+```caddyfile
+:6080 {
+    websocket_notifier /ws "ws://localhost:6081/ws" {
+        write_wait 10s
+        pong_wait 60s
+        ping_interval 50s
+        max_message_size 256k # max incoming message size from subscriber / upstream
+        chan_size 16
+        recovery_wait 5s
+    }
+}
+```
 
 ### Protocol
 
@@ -96,7 +119,7 @@ Rejected (? or de-authorized or unsubscribed)
 ```json
 {
     "operation": "event",
-    "channel": ["a list of channel_name"],
+    "channels": ["a list of channel_name"],
     "payload": { event content }
 }
 ```
@@ -125,9 +148,8 @@ Rejected (? or de-authorized or unsubscribed)
 ```json
 {
     "connection_id": "identifier to distinct different connections",
-    "operation": "subscribe",
-    "accept_channels": ["a list of channel_name"],
-    "reject_channels": ["a list of channel_name"]
+    "operation": "accept / reject",
+    "channels": ["a list of channel_name"],
 }
 ```
 
@@ -143,7 +165,9 @@ Rejected (? or de-authorized or unsubscribed)
 
 caddy-notifier will notifier all subscriber in the specific channel (? or list of channels)
 
-##### de-authorize
+##### TODO de-authorize
+
+Not implemented yet. It would need to record credential -> list of (websocket, channels) and websoket -> list of credential, which is hard to implement correctly during prototype phase.
 
 ```json
 {
