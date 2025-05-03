@@ -10,5 +10,8 @@
 		max_message_size 256k # max incoming message size from subscriber
 		chan_size 16
 		recovery_wait 5s
+
+		header_up +TEST_HEADER "value"
+		header_down -TEST_HEADER "value"
 	}
 }
