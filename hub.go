@@ -177,7 +177,9 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, Notifi
 
 	case "deauthorize":
 		for w, channels := range m.credMap[v.value.Credential] {
+			ch := make([]string, 0, len(channels))
 			for c := range channels {
+				ch = append(ch, c)
 				delete(m.channels[c], w)
 				if len(m.channels[c]) == 0 {
 					delete(m.channels, c)
@@ -185,6 +187,14 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, Notifi
 				delete(m.websocketChannel[w], c)
 			}
 			delete(m.websocketCred[w], v.value.Credential)
+
+			select {
+			case w.outboundChan <- &SubscriberResponse{
+				Operation: "unsubscribe",
+				Channels:  ch,
+			}:
+			default:
+			}
 		}
 		delete(m.credMap, v.value.Credential)
 	}

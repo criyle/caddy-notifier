@@ -2,12 +2,6 @@
 
 Design under construction...
 
-## TODO
-
-- [x] De-authorize
-- [x] Metrics
-- [ ] Rate limit (?)
-
 ## Design
 
 The caddy-notifier works as WebSocket consolidator, that consolidate multiple WebSocket connections into logical channels.
@@ -33,15 +27,14 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 
 ### Considerations
 
-1. When subscriber disconnected from the notifier, it needs to re-subscribe all channels needed, to eliminate requirement of session storage (stateful session)
-2. For subscriber (? maybe certain optional parameter `after` can be added to receive buffered message. How it defines? If timestamp, we need to ensure time sync, If message id, we need to ensure it incremental correctly. Or we just send all buffered message and let subscriber to deduplicate)
-3. ~~(?) The channel name could be in hierarchy structure like `submission/domain_id`. If subscriber subscribes a prefix like `submission` (?all=1), it receives events on `submission` and all child channels. (? or the publisher just publish events with different channel)~~ (consider attribute match or other techniques later)
-4. Metrics ?
-   1. Number of message sent
-   2. number of subscribe event
-   3. current connection count
-   4. current channel count
-   5. upstream status
+1. When subscriber disconnected from the notifier, it needs to re-subscribe all channels needed, to eliminate requirement of session storage (eliminate stateful session)
+2. For subscriber (? maybe certain optional parameter `after` can be added to receive buffered message. How it defines? If timestamped, we need to ensure time sync, If message id, we need to ensure it incremental correctly. Or we just send all buffered message and let subscriber deduplicate)
+3. Metrics
+   1. Number of message sent (`message_sent`)
+   2. number of subscribe event (`subscribe_requested`)
+   3. current connection count (`active_connection`)
+   4. current channel count (`channel_count`)
+   5. upstream status (`upstream_healthy`)
 
 ### Safety Considerations
 
@@ -50,7 +43,6 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 3. Do we allow multiple connection to use the same credential? (maybe from different page, or consolidate via web worker)
 4. Do we want to limit the rate of sending out events? Due to event fan-out nature, there must be write-amplification effect. In this case, do we consider certain event have higher priority or certain event could be dropped when rate limited.
 5. Do we want to limit the subscribe rate for single connection?
-6. Do we want to limit the number of channels in single request?
 
 ### Packages
 
@@ -70,6 +62,13 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
     }
 }
 ```
+
+## TODO
+
+- [x] De-authorize
+- [x] Metrics
+- [ ] Rate limit (?)
+- [ ] Message Buffer
 
 ### Protocol
 
@@ -113,12 +112,12 @@ The caddy-notifier notifies the subscriber on the decision from the authenticato
 
 ```json
 {
-    "operation": "unsubscribed", (?)
+    "operation": "unsubscribed",
     "channels": ["a list of channel_name"],
 }
 ```
 
-Rejected (? or de-authorized or unsubscribed)
+Rejected or de-authorized sent out `unsubscribed` events.
 
 ##### Events
 
@@ -130,7 +129,7 @@ Rejected (? or de-authorized or unsubscribed)
 }
 ```
 
-? When a subscriber subscribes A&B and the event is oriented to A&B. Do we send 2 events, or make channel also a list? (deduplication)
+When a subscriber subscribes to multiple channel in the list, the event will be sent out once.
 
 #### caddy-notifier to backend
 
@@ -172,9 +171,7 @@ Rejected (? or de-authorized or unsubscribed)
 
 caddy-notifier will notifier all subscriber in the specific channel (? or list of channels)
 
-##### TODO de-authorize
-
-Not implemented yet. It would need to record credential -> list of (websocket, channels) and websoket -> list of credential, which is hard to implement correctly during prototype phase.
+##### de-authorize
 
 ```json
 {
