@@ -1,3 +1,7 @@
+{
+	metrics
+}
+
 :6080 {
 	websocket_notifier /ws "ws://localhost:6081/ws" {
 		write_wait 10s

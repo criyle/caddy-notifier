@@ -2,6 +2,12 @@
 
 Design under construction...
 
+## TODO
+
+- [x] De-authorize
+- [x] Metrics
+- [ ] Rate limit (?)
+
 ## Design
 
 The caddy-notifier works as WebSocket consolidator, that consolidate multiple WebSocket connections into logical channels.
@@ -149,6 +155,7 @@ Rejected (? or de-authorized or unsubscribed)
 {
     "connection_id": "identifier to distinct different connections",
     "operation": "accept / reject",
+    "credential": "credential for the accepted channel, must present if deauthorize requested", 
     "channels": ["a list of channel_name"],
 }
 ```

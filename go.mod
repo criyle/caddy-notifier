@@ -6,6 +6,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.10.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/prometheus/client_golang v1.19.1
 	go.uber.org/zap v1.27.0
 )
 
@@ -70,7 +71,6 @@ require (
 	github.com/onsi/ginkgo/v2 v2.13.2 // indirect
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/prometheus/client_golang v1.19.1 // indirect
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect

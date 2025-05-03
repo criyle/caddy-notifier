@@ -21,6 +21,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 	log.Println("connect: ", c.RemoteAddr())
+	i := 0
 
 	for {
 		var req caddynotifier.NotifierRequest
@@ -34,6 +35,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 			res := &caddynotifier.NotifierResponse{
 				Operation:    "accept",
 				ConnectionId: req.ConnectionId,
+				Credential:   req.Credential,
 				Channels:     req.Channels,
 			}
 			err := c.WriteJSON(res)
@@ -61,7 +63,20 @@ func ws(w http.ResponseWriter, r *http.Request) {
 				log.Println("writejson2: ", err)
 				return
 			}
+			if i%5 == 0 {
+				res = &caddynotifier.NotifierResponse{
+					Operation:  "deauthorize",
+					Credential: req.Credential,
+				}
+				err = c.WriteJSON(res)
+				if err != nil {
+					log.Println("writejson2: ", err)
+					return
+				}
+				log.Println("deauthorize")
+			}
 		}
+		i++
 	}
 }
 

@@ -112,6 +112,8 @@ func (m *WebSocketNotifier) Provision(ctx caddy.Context) error {
 
 	m.subscriberReqChan = make(chan inboundMessage[SubscriberResponse, SubscriberRequest], m.ChanSize)
 
+	initCaddyNotifierMetrics(ctx.GetMetricsRegistry())
+
 	go m.upstreamMaintainer()
 	go m.messageProcessor()
 
@@ -259,10 +261,12 @@ func (m *WebSocketNotifier) upstreamMaintainer() {
 		recoverWait := time.After(recoverWait)
 		w, err := m.dialUpstream()
 		if err != nil {
+			caddyNotifierMetrics.upstreamStatus.WithLabelValues(m.Upstream).Set(0.0)
 			if c := m.logger.Check(zap.InfoLevel, "connect to upstream failed"); c != nil {
 				c.Write(zap.String("upstream", m.Upstream), zap.Error(err))
 			}
 		} else {
+			caddyNotifierMetrics.upstreamStatus.WithLabelValues(m.Upstream).Set(1.0)
 			m.pumpMessage(w)
 			if c := m.logger.Check(zap.InfoLevel, "upstream disconnected"); c != nil {
 				c.Write(zap.String("upstream", m.Upstream), zap.Error(w.err))
@@ -305,150 +309,10 @@ func (m *WebSocketNotifier) pumpMessage(w *upstreamWebSocket) {
 	}
 }
 
-type messageHub struct {
-	// websocket -> set of channels
-	websocketChannel map[*subscriberWebSocket]map[string]struct{}
-	// channel -> set of websockets
-	channels map[string]map[*subscriberWebSocket]struct{}
-	// websocket id (remote addr) -> websocket
-	idMap map[string]*subscriberWebSocket
-	// upstreamChan
-	upstreamReqChan chan *NotifierRequest
-}
-
-func (m *messageHub) handleSubReq(v inboundMessage[SubscriberResponse, SubscriberRequest]) {
-	if v.value == nil {
-		m.handleSubClose(v.conn)
-		return
-	}
-	select {
-	case <-v.conn.done:
-		return
-	default:
-	}
-	switch v.value.Operation {
-	case "subscribe":
-		m.idMap[v.conn.id] = v.conn
-		m.upstreamReqChan <- &NotifierRequest{
-			Operation:    "subscribe",
-			ConnectionId: v.conn.id,
-			Channels:     v.value.Channels,
-			Credential:   v.value.Credential,
-		}
-
-	case "unsubscribe":
-		if m.websocketChannel[v.conn] == nil {
-			return
-		}
-		for _, c := range v.value.Channels {
-			if _, ok := m.websocketChannel[v.conn][c]; !ok {
-				continue
-			}
-			delete(m.channels[c], v.conn)
-			if len(m.channels[c]) == 0 {
-				delete(m.channels, c)
-			}
-			delete(m.websocketChannel[v.conn], c)
-		}
-	}
-}
-
-func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
-	for c := range m.websocketChannel[w] {
-		delete(m.channels[c], w)
-		if len(m.channels[c]) == 0 {
-			delete(m.channels, c)
-		}
-	}
-	delete(m.idMap, w.id)
-	delete(m.websocketChannel, w)
-}
-
-func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, NotifierResponse]) {
-	if v.value == nil {
-		return
-	}
-	switch v.value.Operation {
-	case "accept":
-		w, ok := m.idMap[v.value.ConnectionId]
-		if !ok {
-			return
-		}
-		select {
-		case <-w.done:
-			m.handleSubClose(w)
-			return
-		default:
-		}
-
-		for _, c := range v.value.Channels {
-			if m.websocketChannel[w] == nil {
-				m.websocketChannel[w] = map[string]struct{}{}
-			}
-			m.websocketChannel[w][c] = struct{}{}
-			if m.channels[c] == nil {
-				m.channels[c] = map[*subscriberWebSocket]struct{}{}
-			}
-			m.channels[c][w] = struct{}{}
-		}
-		select {
-		case w.outboundChan <- &SubscriberResponse{
-			Operation: "subscribe",
-			Channels:  v.value.Channels,
-		}:
-		default:
-		}
-
-	case "reject":
-		w, ok := m.idMap[v.value.ConnectionId]
-		if !ok {
-			return
-		}
-		select {
-		case <-w.done:
-			m.handleSubClose(w)
-			return
-		default:
-		}
-
-		select {
-		case w.outboundChan <- &SubscriberResponse{
-			Operation: "unsubscribe",
-			Channels:  v.value.Channels,
-		}:
-		default:
-		}
-
-	case "notify":
-		websocketToNotify := make(map[*subscriberWebSocket]struct{})
-		for _, c := range v.value.Channels {
-			for w := range m.channels[c] {
-				websocketToNotify[w] = struct{}{}
-			}
-		}
-		for w := range websocketToNotify {
-			select {
-			case w.outboundChan <- &SubscriberResponse{
-				Operation: "event",
-				Channels:  v.value.Channels,
-				Payload:   v.value.Payload,
-			}:
-			default:
-			}
-		}
-
-	case "deauthorize":
-		// TODO
-	}
-}
-
 func (m *WebSocketNotifier) messageProcessor() {
-	hub := &messageHub{
-		websocketChannel: make(map[*subscriberWebSocket]map[string]struct{}),
-		channels:         make(map[string]map[*subscriberWebSocket]struct{}),
-		idMap:            make(map[string]*subscriberWebSocket),
-		upstreamReqChan:  m.upstreamReqChan,
-	}
+	hub := newMessageHub(m.upstreamReqChan)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -460,8 +324,20 @@ func (m *WebSocketNotifier) messageProcessor() {
 
 		case v := <-m.upstreamRespChan:
 			hub.handleUpstreamResp(v)
+
+		case <-ticker.C:
+			updateMetrics(hub, m.Upstream)
 		}
 	}
+}
+
+func updateMetrics(hub *messageHub, upstream string) {
+	caddyNotifierMetrics.eventSent.WithLabelValues(upstream).Add(float64(hub.eventSent))
+	hub.eventSent = 0
+	caddyNotifierMetrics.subscribeRequest.WithLabelValues(upstream).Add(float64(hub.subscribeRequested))
+	hub.subscribeRequested = 0
+	caddyNotifierMetrics.activeConnection.WithLabelValues(upstream).Set(float64(len(hub.websocketChannel)))
+	caddyNotifierMetrics.channelCount.WithLabelValues(upstream).Set(float64(len(hub.channels)))
 }
 
 // Interface guards
