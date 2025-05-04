@@ -225,6 +225,9 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 				websocketToNotify[w] = struct{}{}
 			}
 		}
+		if len(websocketToNotify) == 0 {
+			return
+		}
 		select {
 		case m.workerChan <- &workerRequest{
 			websockets: websocketToNotify,

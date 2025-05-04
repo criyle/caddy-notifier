@@ -402,7 +402,15 @@ func (m *WebSocketNotifier) dialUpstream() (*upstreamWebSocket, error) {
 	ctx, cancel := context.WithTimeout(m.ctx, defaultRecoverWait)
 	defer cancel()
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, m.Upstream, nil)
+	repl, ok := m.ctx.Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	if !ok {
+		repl = caddy.NewReplacer()
+	}
+
+	h := make(http.Header)
+	m.Headers.Request.ApplyTo(h, repl)
+
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, m.Upstream, h)
 	if err != nil {
 		return nil, err
 	}
