@@ -29,12 +29,15 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 
 1. When subscriber disconnected from the notifier, it needs to re-subscribe all channels needed, to eliminate requirement of session storage (eliminate stateful session)
 2. For subscriber (? maybe certain optional parameter `after` can be added to receive buffered message. How it defines? If timestamped, we need to ensure time sync, If message id, we need to ensure it incremental correctly. Or we just send all buffered message and let subscriber deduplicate)
-3. Metrics
-   1. Number of message sent (`message_sent`)
-   2. number of subscribe event (`subscribe_requested`)
+3. Metrics (prefix `caddy_websocket_notifier_*`)
+   1. Number of message sent (`message_sent_total`)
+   2. number of subscribe event (`subscribe_requested_total`)
    3. current connection count (`active_connection`)
    4. current channel count (`channel_count`)
    5. upstream status (`upstream_healthy`)
+   6. inbound message size (`websocket_inbound_bytes_total`)
+   7. outbound message size (`websocket_outbound_bytes_total`)
+   8. outbound compressed message size (`websocket_outbound_compressed_bytes_total`)
 
 ### Safety Considerations
 
@@ -51,14 +54,24 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 ### Caddyfile
 
 ```caddyfile
+{
+    metrics
+}
+
 :6080 {
     websocket_notifier /ws "ws://localhost:6081/ws" {
         write_wait 10s
         pong_wait 60s
         ping_interval 50s
-        max_message_size 256k # max incoming message size from subscriber / upstream
+        max_message_size 256k # max incoming message size from subscriber
         chan_size 16
         recovery_wait 5s
+
+        header_up +TEST_HEADER "value"
+        header_down -TEST_HEADER "value"
+
+        compression shorty
+        shorty_reset_count 1000
     }
 }
 ```
@@ -71,6 +84,8 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 - [ ] Message Buffer
 
 ### Protocol
+
+The client sent of `ping` message will be treated as `ping`, and the client sent of `shorty` message will be treated as `shorty` compression enable operation.
 
 #### subscriber to caddy-notifier
 
