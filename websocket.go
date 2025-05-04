@@ -1,42 +1,60 @@
 package caddynotifier
 
 import (
+	"bytes"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
+	"github.com/criyle/caddy-notifier/shorty"
 	"github.com/gorilla/websocket"
 )
 
-type webSocket[T any, V any] struct {
+var (
+	websocketInboundBytes    atomic.Int64
+	websocketOutboundBytes   atomic.Int64
+	websocketCompressedBytes atomic.Int64
+)
+
+type webSocket[T any] struct {
 	conn         *websocket.Conn
-	outboundChan chan<- *T
+	outboundChan chan<- *outboundMessage
 	config       *websocketConfig
 	err          error
 	done         <-chan struct{}
 	id           string
 }
 
-type inboundMessage[T any, V any] struct {
+type inboundMessage[T any] struct {
 	// conn indicate the sender of the message
-	conn *webSocket[T, V]
+	conn *webSocket[T]
 	// value contains the message content
-	value *V
+	value *T
 	// err contains error if read error happens, when receiving this message, means the conn is dead
 	err error
 }
 
-type websocketConfig struct {
-	writeWait      time.Duration
-	pongWait       time.Duration
-	pingInterval   time.Duration // must less than pongWait
-	maxMessageSize int64
-	chanSize       int
+type outboundMessage struct {
+	messageType     int
+	data            []byte
+	preparedMessage *websocket.PreparedMessage
 }
 
-func newWebSocket[T any, V any](conn *websocket.Conn, inboundChan chan<- inboundMessage[T, V], conf *websocketConfig) *webSocket[T, V] {
-	outC := make(chan *T, conf.chanSize)
+type websocketConfig struct {
+	writeWait        time.Duration
+	pongWait         time.Duration
+	pingInterval     time.Duration // must less than pongWait
+	maxMessageSize   int64
+	chanSize         int
+	shortyResetCount int
+	shorty           bool
+	metrics          bool
+}
+
+func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage[T], conf *websocketConfig) *webSocket[T] {
+	outC := make(chan *outboundMessage, conf.chanSize)
 	done := make(chan struct{})
-	w := &webSocket[T, V]{
+	w := &webSocket[T]{
 		conn:         conn,
 		outboundChan: outC,
 		config:       conf,
@@ -49,13 +67,13 @@ func newWebSocket[T any, V any](conn *websocket.Conn, inboundChan chan<- inbound
 	return w
 }
 
-func (w *webSocket[T, V]) Close() error {
+func (w *webSocket[T]) Close() error {
 	return w.conn.Close()
 }
 
-func (w *webSocket[T, V]) readLoop(done chan struct{}, inboundChan chan<- inboundMessage[T, V]) {
+func (w *webSocket[T]) readLoop(done chan struct{}, inboundChan chan<- inboundMessage[T]) {
 	defer func() {
-		inboundChan <- inboundMessage[T, V]{
+		inboundChan <- inboundMessage[T]{
 			conn: w,
 			err:  w.err,
 		}
@@ -67,30 +85,65 @@ func (w *webSocket[T, V]) readLoop(done chan struct{}, inboundChan chan<- inboun
 	w.conn.SetReadDeadline(time.Now().Add(w.config.pongWait))
 	w.conn.SetPongHandler(func(string) error { w.conn.SetReadDeadline(time.Now().Add(w.config.pongWait)); return nil })
 
+	var sh *shorty.Shorty
+
 	for {
-		_, r, err := w.conn.NextReader()
+		_, data, err := w.conn.ReadMessage()
 		if err != nil {
 			w.err = err
 			return
 		}
-		v := new(V)
-		if err := json.NewDecoder(r).Decode(v); err != nil {
+		if w.config.metrics {
+			websocketInboundBytes.Add(int64(len(data)))
+		}
+		// ignore ping
+		if bytes.Equal(data, []byte("ping")) {
+			continue
+		}
+		// support shorty
+		if bytes.Equal(data, []byte("shorty")) {
+			if sh == nil {
+				sh = shorty.NewShorty(10)
+			} else {
+				sh.Reset(true)
+			}
+			continue
+		}
+		if sh != nil {
+			data = sh.Inflate(data)
+		}
+		v := new(T)
+		if err := json.NewDecoder(bytes.NewBuffer(data)).Decode(v); err != nil {
 			w.err = err
 			return
 		}
-		inboundChan <- inboundMessage[T, V]{
+		inboundChan <- inboundMessage[T]{
 			conn:  w,
 			value: v,
 		}
 	}
 }
 
-func (w *webSocket[T, V]) writeLoop(done chan struct{}, outboundChan chan *T) {
+func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outboundMessage) {
 	ticker := time.NewTicker(w.config.pingInterval)
 	defer func() {
 		ticker.Stop()
 		w.conn.Close()
 	}()
+
+	var (
+		sh    *shorty.Shorty
+		count int
+	)
+	resetShorty := func() error {
+		count = 0
+		sh.Reset(true)
+		return w.conn.WriteMessage(websocket.TextMessage, []byte("shorty"))
+	}
+	if w.config.shorty {
+		sh = shorty.NewShorty(10)
+		resetShorty()
+	}
 
 	for {
 		select {
@@ -100,15 +153,30 @@ func (w *webSocket[T, V]) writeLoop(done chan struct{}, outboundChan chan *T) {
 				w.conn.WriteMessage(websocket.CloseMessage, nil)
 				return
 			}
-			wr, err := w.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			if err := json.NewEncoder(wr).Encode(v); err != nil {
-				return
-			}
-			if err := wr.Close(); err != nil {
-				return
+			if v.preparedMessage != nil {
+				w.conn.WritePreparedMessage(v.preparedMessage)
+			} else {
+				t := v.messageType
+				data := v.data
+				if w.config.metrics {
+					websocketOutboundBytes.Add(int64(len(data)))
+				}
+				if sh != nil {
+					if w.config.shortyResetCount > 0 && count > w.config.shortyResetCount {
+						if err := resetShorty(); err != nil {
+							return
+						}
+					}
+					data = sh.Deflate(v.data)
+					t = websocket.BinaryMessage
+					count++
+					if w.config.metrics {
+						websocketCompressedBytes.Add(int64(len(data)))
+					}
+				}
+				if err := w.conn.WriteMessage(t, data); err != nil {
+					return
+				}
 			}
 
 		case <-ticker.C:

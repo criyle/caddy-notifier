@@ -291,8 +291,8 @@ func isPunctGroup(c byte) bool {
 	}
 }
 
-// deflate compresses the input string using adaptive Huffman coding.
-func (s *Shorty) deflate(data []byte) []byte {
+// Deflate compresses the input string using adaptive Huffman coding.
+func (s *Shorty) Deflate(data []byte) []byte {
 	l := len(data)
 	s.Reset(false)
 	for i := 0; i < l; i++ {
@@ -333,8 +333,8 @@ func (s *Shorty) deflate(data []byte) []byte {
 	return s.data
 }
 
-// deflate decompresses the input string using adaptive Huffman coding.
-func (s *Shorty) inflate(data []byte) []byte {
+// Inflate decompresses the input string using adaptive Huffman coding.
+func (s *Shorty) Inflate(data []byte) []byte {
 	s.Reset(false)
 	s.data = data
 	output := new(bytes.Buffer)

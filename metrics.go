@@ -8,12 +8,15 @@ import (
 )
 
 var caddyNotifierMetrics = struct {
-	once             sync.Once
-	eventSent        *prometheus.CounterVec
-	subscribeRequest *prometheus.CounterVec
-	activeConnection *prometheus.GaugeVec
-	channelCount     *prometheus.GaugeVec
-	upstreamStatus   *prometheus.GaugeVec
+	once                     sync.Once
+	eventSent                *prometheus.CounterVec
+	subscribeRequest         *prometheus.CounterVec
+	activeConnection         *prometheus.GaugeVec
+	channelCount             *prometheus.GaugeVec
+	upstreamStatus           *prometheus.GaugeVec
+	websocketInboundBytes    *prometheus.CounterVec
+	websocketOutboundBytes   *prometheus.CounterVec
+	websocketCompressedBytes *prometheus.CounterVec
 }{}
 
 func initCaddyNotifierMetrics(registry *prometheus.Registry) {
@@ -24,13 +27,13 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 		caddyNotifierMetrics.eventSent = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns,
 			Subsystem: sub,
-			Name:      "event_sent",
+			Name:      "event_sent_total",
 			Help:      "The number of event sent to websocket subscribers",
 		}, labels)
 		caddyNotifierMetrics.subscribeRequest = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns,
 			Subsystem: sub,
-			Name:      "subscribe_requested",
+			Name:      "subscribe_requested_total",
 			Help:      "The number of channel subscribe received from websocket subscribers",
 		}, labels)
 		caddyNotifierMetrics.activeConnection = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -51,11 +54,30 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 			Name:      "upstream_healthy",
 			Help:      "Healthy status of upstream websocket connection",
 		}, labels)
+		caddyNotifierMetrics.websocketInboundBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "websocket_inbound_bytes_total",
+			Help:      "Total websocket inbound message size",
+		}, labels)
+		caddyNotifierMetrics.websocketOutboundBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "websocket_outbound_bytes_total",
+			Help:      "Total websocket outbound message size",
+		}, labels)
+		caddyNotifierMetrics.websocketCompressedBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "websocket_outbound_compressed_bytes_total",
+			Help:      "Total websocket outbound message size after compressed by shorty",
+		}, labels)
 	})
 	for _, c := range []prometheus.Collector{
 		caddyNotifierMetrics.eventSent, caddyNotifierMetrics.subscribeRequest,
 		caddyNotifierMetrics.activeConnection, caddyNotifierMetrics.channelCount,
-		caddyNotifierMetrics.upstreamStatus} {
+		caddyNotifierMetrics.upstreamStatus, caddyNotifierMetrics.websocketInboundBytes,
+		caddyNotifierMetrics.websocketOutboundBytes, caddyNotifierMetrics.websocketCompressedBytes} {
 		if err := registry.Register(c); err != nil && !errors.Is(err, prometheus.AlreadyRegisteredError{
 			ExistingCollector: c,
 			NewCollector:      c,

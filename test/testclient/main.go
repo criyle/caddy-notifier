@@ -8,6 +8,7 @@ import (
 	"time"
 
 	caddynotifier "github.com/criyle/caddy-notifier"
+	"github.com/criyle/caddy-notifier/shorty"
 	"github.com/gorilla/websocket"
 )
 
@@ -19,13 +20,33 @@ func runClient() {
 	}
 	defer c.Close()
 
+	sh := shorty.NewShorty(10)
+	var rsh *shorty.Shorty
+
 	done := make(chan struct{})
 
 	go func() {
 		defer close(done)
 		for {
+			_, data, err := c.ReadMessage()
+			if err != nil {
+				log.Println("read: ", err)
+				return
+			}
+			if bytes.Equal(data, []byte("shorty")) {
+				if rsh == nil {
+					rsh = shorty.NewShorty(10)
+				} else {
+					rsh.Reset(true)
+				}
+				continue
+			}
+			if rsh != nil {
+				data = rsh.Inflate(data)
+			}
+
 			var resp caddynotifier.SubscriberResponse
-			err := c.ReadJSON(&resp)
+			err = json.NewDecoder(bytes.NewBuffer(data)).Decode(&resp)
 			if err != nil {
 				log.Println("read json: ", err)
 				return
@@ -48,6 +69,11 @@ func runClient() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	if err := c.WriteMessage(websocket.TextMessage, []byte("shorty")); err != nil {
+		log.Println("shorty")
+		return
+	}
+
 	for {
 		select {
 		case <-done:
@@ -58,7 +84,12 @@ func runClient() {
 				Credential: "cred",
 				Channels:   []string{"all", strconv.Itoa(int(t.Unix()))},
 			}
-			err := c.WriteJSON(req)
+			buf := new(bytes.Buffer)
+			if err := json.NewEncoder(buf).Encode(req); err != nil {
+				log.Println("json: ", err)
+				return
+			}
+			err := c.WriteMessage(websocket.BinaryMessage, sh.Deflate(buf.Bytes()))
 			if err != nil {
 				log.Println("write json: ", err)
 				return

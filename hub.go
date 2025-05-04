@@ -1,5 +1,13 @@
 package caddynotifier
 
+import (
+	"bytes"
+	"encoding/json"
+	"runtime"
+
+	"github.com/gorilla/websocket"
+)
+
 type messageHub struct {
 	// websocket -> set of channels
 	websocketChannel map[*subscriberWebSocket]map[string]struct{}
@@ -13,24 +21,72 @@ type messageHub struct {
 	credMap map[string]map[*subscriberWebSocket]map[string]struct{}
 	// upstreamChan
 	upstreamReqChan chan *NotifierRequest
+	// workerChan
+	workerChan chan *workerRequest
 
 	// metrics
 	eventSent          int64
 	subscribeRequested int64
 }
 
+type workerRequest struct {
+	websockets map[*subscriberWebSocket]struct{}
+	websocket  *subscriberWebSocket
+	response   *SubscriberResponse
+}
+
 func newMessageHub(upstreamReqChan chan *NotifierRequest) *messageHub {
-	return &messageHub{
+	workerCount := 4
+	if cur := runtime.GOMAXPROCS(0); cur < workerCount {
+		workerCount = cur
+	}
+
+	hub := &messageHub{
 		websocketChannel: make(map[*subscriberWebSocket]map[string]struct{}),
 		channels:         make(map[string]map[*subscriberWebSocket]struct{}),
 		idMap:            make(map[string]*subscriberWebSocket),
 		websocketCred:    make(map[*subscriberWebSocket]map[string]struct{}),
 		credMap:          make(map[string]map[*subscriberWebSocket]map[string]struct{}),
 		upstreamReqChan:  upstreamReqChan,
+		workerChan:       make(chan *workerRequest, 256),
+	}
+
+	for range workerCount {
+		go hub.workerLoop()
+	}
+	return hub
+}
+
+func (m *messageHub) Close() {
+	close(m.workerChan)
+}
+
+func (m *messageHub) workerLoop() {
+	for v := range m.workerChan {
+		buf := new(bytes.Buffer)
+		_ = json.NewEncoder(buf).Encode(v.response)
+		msg := &outboundMessage{
+			messageType: websocket.TextMessage,
+			data:        buf.Bytes(),
+		}
+		if v.websocket != nil {
+			select {
+			case v.websocket.outboundChan <- msg:
+			default:
+			}
+		}
+		if v.websockets != nil {
+			for w := range v.websockets {
+				select {
+				case w.outboundChan <- msg:
+				default:
+				}
+			}
+		}
 	}
 }
 
-func (m *messageHub) handleSubReq(v inboundMessage[SubscriberResponse, SubscriberRequest]) {
+func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 	if v.value == nil {
 		m.handleSubClose(v.conn)
 		return
@@ -87,7 +143,7 @@ func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
 	delete(m.websocketCred, w)
 }
 
-func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, NotifierResponse]) {
+func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 	if v.value == nil {
 		return
 	}
@@ -129,9 +185,12 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, Notifi
 			m.credMap[v.value.Credential][w][c] = struct{}{}
 		}
 		select {
-		case w.outboundChan <- &SubscriberResponse{
-			Operation: "subscribe",
-			Channels:  v.value.Channels,
+		case m.workerChan <- &workerRequest{
+			websocket: w,
+			response: &SubscriberResponse{
+				Operation: "subscribe",
+				Channels:  v.value.Channels,
+			},
 		}:
 		default:
 		}
@@ -149,9 +208,12 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, Notifi
 		}
 
 		select {
-		case w.outboundChan <- &SubscriberResponse{
-			Operation: "unsubscribe",
-			Channels:  v.value.Channels,
+		case m.workerChan <- &workerRequest{
+			websocket: w,
+			response: &SubscriberResponse{
+				Operation: "unsubscribe",
+				Channels:  v.value.Channels,
+			},
 		}:
 		default:
 		}
@@ -163,15 +225,16 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, Notifi
 				websocketToNotify[w] = struct{}{}
 			}
 		}
-		for w := range websocketToNotify {
-			select {
-			case w.outboundChan <- &SubscriberResponse{
+		select {
+		case m.workerChan <- &workerRequest{
+			websockets: websocketToNotify,
+			response: &SubscriberResponse{
 				Operation: "event",
 				Channels:  v.value.Channels,
 				Payload:   v.value.Payload,
-			}:
-			default:
-			}
+			},
+		}:
+		default:
 		}
 		m.eventSent += int64(len(websocketToNotify))
 
@@ -189,9 +252,12 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierRequest, Notifi
 			delete(m.websocketCred[w], v.value.Credential)
 
 			select {
-			case w.outboundChan <- &SubscriberResponse{
-				Operation: "unsubscribe",
-				Channels:  ch,
+			case m.workerChan <- &workerRequest{
+				websocket: w,
+				response: &SubscriberResponse{
+					Operation: "unsubscribe",
+					Channels:  ch,
+				},
 			}:
 			default:
 			}

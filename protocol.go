@@ -2,8 +2,8 @@ package caddynotifier
 
 import "encoding/json"
 
-type upstreamWebSocket = webSocket[NotifierRequest, NotifierResponse]
-type subscriberWebSocket = webSocket[SubscriberResponse, SubscriberRequest]
+type upstreamWebSocket = webSocket[NotifierResponse]
+type subscriberWebSocket = webSocket[SubscriberRequest]
 
 // SubscriberRequest subscriber -> notifier
 type SubscriberRequest struct {

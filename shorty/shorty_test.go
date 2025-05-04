@@ -7,13 +7,13 @@ import (
 const testString = "First test string, hello world! Hello world? Hello world!"
 
 func test(t *testing.T, original string, tokenSize int) {
-	deflated := NewShorty(tokenSize).deflate([]byte(original))
-	inflated := string(NewShorty(tokenSize).inflate(deflated))
+	Deflated := NewShorty(tokenSize).Deflate([]byte(original))
+	Inflated := string(NewShorty(tokenSize).Inflate(Deflated))
 	t.Log()
 	t.Log("original", len(original), original)
-	t.Log("deflated", len(deflated), deflated)
-	t.Log("inflated", len(inflated), inflated)
-	if inflated != original {
+	t.Log("Deflated", len(Deflated), Deflated)
+	t.Log("Inflated", len(Inflated), Inflated)
+	if Inflated != original {
 		t.FailNow()
 	}
 }
@@ -25,22 +25,22 @@ func test2(t *testing.T, original string, original2 string, tokenSize int) {
 	t.Log("original", len(original), original)
 	t.Log("original", len(original2), original2)
 
-	deflated := d.deflate([]byte(original))
-	t.Log("deflated", len(deflated), deflated)
+	Deflated := d.Deflate([]byte(original))
+	t.Log("Deflated", len(Deflated), Deflated)
 
-	inflated := string(i.inflate(deflated))
-	t.Log("inflated", len(inflated), inflated)
+	Inflated := string(i.Inflate(Deflated))
+	t.Log("Inflated", len(Inflated), Inflated)
 
-	deflated2 := d.deflate([]byte(original2))
-	t.Log("deflated", len(deflated2), deflated2)
+	Deflated2 := d.Deflate([]byte(original2))
+	t.Log("Deflated", len(Deflated2), Deflated2)
 
-	inflated2 := string(i.inflate(deflated2))
-	t.Log("inflated", len(inflated2), inflated2)
+	Inflated2 := string(i.Inflate(Deflated2))
+	t.Log("Inflated", len(Inflated2), Inflated2)
 
-	if inflated != original {
+	if Inflated != original {
 		t.FailNow()
 	}
-	if inflated2 != original2 {
+	if Inflated2 != original2 {
 		t.FailNow()
 	}
 }
@@ -48,17 +48,17 @@ func test2(t *testing.T, original string, original2 string, tokenSize int) {
 func BenchmarkDeflate(b *testing.B) {
 	d := NewShorty(10)
 	for b.Loop() {
-		d.deflate([]byte(testString))
+		d.Deflate([]byte(testString))
 	}
 }
 
 func BenchmarkInflate(b *testing.B) {
 	d := NewShorty(10)
 	i := NewShorty(10)
-	def := d.deflate([]byte(testString))
+	def := d.Deflate([]byte(testString))
 	for b.Loop() {
 		i.Reset(true)
-		i.inflate(def)
+		i.Inflate(def)
 	}
 }
 

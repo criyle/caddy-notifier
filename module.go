@@ -1,7 +1,9 @@
 package caddynotifier
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -31,14 +33,16 @@ func init() {
 // controller service
 type WebSocketNotifier struct {
 	// Upstream address for the backend controller
-	Upstream       string           `json:"upstream,omitempty"`
-	WriteWait      caddy.Duration   `json:"write_wait,omitempty"`
-	PongWait       caddy.Duration   `json:"pong_wait,omitempty"`
-	PingInterval   caddy.Duration   `json:"ping_interval,omitempty"`
-	MaxMessageSize int64            `json:"max_message_size,omitempty"`
-	ChanSize       int              `json:"chan_size,omitempty"`
-	RecoverWait    caddy.Duration   `json:"recover_wait,omitempty"`
-	Headers        *headers.Handler `json:"headers,omitempty"`
+	Upstream         string           `json:"upstream,omitempty"`
+	WriteWait        caddy.Duration   `json:"write_wait,omitempty"`
+	PongWait         caddy.Duration   `json:"pong_wait,omitempty"`
+	PingInterval     caddy.Duration   `json:"ping_interval,omitempty"`
+	MaxMessageSize   int64            `json:"max_message_size,omitempty"`
+	ChanSize         int              `json:"chan_size,omitempty"`
+	RecoverWait      caddy.Duration   `json:"recover_wait,omitempty"`
+	Headers          *headers.Handler `json:"headers,omitempty"`
+	Compression      string           `json:"compression,omitempty"`
+	ShortyResetCount int              `json:"shorty_reset_count,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -49,11 +53,11 @@ type WebSocketNotifier struct {
 	websocketConfig *websocketConfig
 
 	// upstreams
-	upstreamRespChan chan inboundMessage[NotifierRequest, NotifierResponse]
+	upstreamRespChan chan inboundMessage[NotifierResponse]
 	upstreamReqChan  chan *NotifierRequest
 
 	// subscribers
-	subscriberReqChan chan inboundMessage[SubscriberResponse, SubscriberRequest]
+	subscriberReqChan chan inboundMessage[SubscriberRequest]
 }
 
 const (
@@ -79,7 +83,7 @@ func (m *WebSocketNotifier) Provision(ctx caddy.Context) error {
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
-		EnableCompression: true,
+		EnableCompression: m.Compression == "permessage-deflate",
 	}
 	writeWait := time.Duration(m.WriteWait)
 	if writeWait == 0 {
@@ -109,17 +113,20 @@ func (m *WebSocketNotifier) Provision(ctx caddy.Context) error {
 	m.ctx = ctx
 	m.logger = ctx.Logger()
 	m.websocketConfig = &websocketConfig{
-		writeWait:      writeWait,
-		pongWait:       pongWait,
-		pingInterval:   pingInterval,
-		maxMessageSize: maxMessageSize,
-		chanSize:       chanSize,
+		writeWait:        writeWait,
+		pongWait:         pongWait,
+		pingInterval:     pingInterval,
+		maxMessageSize:   maxMessageSize,
+		chanSize:         chanSize,
+		shortyResetCount: m.ShortyResetCount,
+		shorty:           m.Compression == "shorty",
+		metrics:          true,
 	}
 
-	m.upstreamRespChan = make(chan inboundMessage[NotifierRequest, NotifierResponse], m.ChanSize)
+	m.upstreamRespChan = make(chan inboundMessage[NotifierResponse], m.ChanSize)
 	m.upstreamReqChan = make(chan *NotifierRequest, m.ChanSize)
 
-	m.subscriberReqChan = make(chan inboundMessage[SubscriberResponse, SubscriberRequest], m.ChanSize)
+	m.subscriberReqChan = make(chan inboundMessage[SubscriberRequest], m.ChanSize)
 
 	initCaddyNotifierMetrics(ctx.GetMetricsRegistry())
 
@@ -138,6 +145,9 @@ func (m *WebSocketNotifier) Cleanup() error {
 func (m *WebSocketNotifier) Validate() error {
 	if m.PingInterval > m.PongWait {
 		return fmt.Errorf("ping_interval > pong_wait: %v > %v", m.PingInterval, m.PongWait)
+	}
+	if m.Compression != "permessage-deflate" && m.Compression != "shorty" && m.Compression != "off" && m.Compression != "" {
+		return fmt.Errorf("bad compression value: %s", m.Compression)
 	}
 	return nil
 }
@@ -173,6 +183,8 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 //	  max_message_size <size>
 //	  chan_size        <num>
 //	  recovery_wait    <interval>
+//	  compression <permessage-deflate | shorty | off>
+//	  shorty_reset_count <num>
 //
 //	  header_up   [+|-]<field> [<value|regexp> [<replacement>]]
 //	  header_down [+|-]<field> [<value|regexp> [<replacement>]]
@@ -252,6 +264,22 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Errf("bad duration value %s: %v", d.Val(), err)
 			}
 			m.RecoverWait = caddy.Duration(dur)
+
+		case "compression":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			m.Compression = d.Val()
+
+		case "shorty_reset_count":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			count, err := strconv.Atoi(d.Val())
+			if err != nil {
+				return d.Errf("bad shorty_reset_count value %s: %v", d.Val(), err)
+			}
+			m.ShortyResetCount = count
 
 			// from https://github.com/caddyserver/caddy/blob/master/modules/caddyhttp/reverseproxy/caddyfile.go#L711
 		case "header_up":
@@ -378,7 +406,10 @@ func (m *WebSocketNotifier) dialUpstream() (*upstreamWebSocket, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWebSocket(conn, m.upstreamRespChan, m.websocketConfig), nil
+	config := *m.websocketConfig
+	config.shorty = false
+	config.metrics = false
+	return newWebSocket(conn, m.upstreamRespChan, &config), nil
 }
 
 func (m *WebSocketNotifier) pumpMessage(w *upstreamWebSocket) {
@@ -392,13 +423,19 @@ func (m *WebSocketNotifier) pumpMessage(w *upstreamWebSocket) {
 			return
 
 		case v := <-m.upstreamReqChan:
-			w.outboundChan <- v
+			buf := new(bytes.Buffer)
+			if err := json.NewEncoder(buf).Encode(v); err != nil {
+				return
+			}
+			w.outboundChan <- &outboundMessage{messageType: websocket.TextMessage, data: buf.Bytes()}
 		}
 	}
 }
 
 func (m *WebSocketNotifier) messageProcessor() {
 	hub := newMessageHub(m.upstreamReqChan)
+	defer hub.Close()
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -426,14 +463,12 @@ func updateMetrics(hub *messageHub, upstream string) {
 	hub.subscribeRequested = 0
 	caddyNotifierMetrics.activeConnection.WithLabelValues(upstream).Set(float64(len(hub.websocketChannel)))
 	caddyNotifierMetrics.channelCount.WithLabelValues(upstream).Set(float64(len(hub.channels)))
-}
-
-func copyHeader(dst, src http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
+	inbound := websocketInboundBytes.Swap(0)
+	caddyNotifierMetrics.websocketInboundBytes.WithLabelValues(upstream).Add(float64(inbound))
+	outbound := websocketOutboundBytes.Swap(0)
+	caddyNotifierMetrics.websocketOutboundBytes.WithLabelValues(upstream).Add(float64(outbound))
+	compressed := websocketCompressedBytes.Swap(0)
+	caddyNotifierMetrics.websocketCompressedBytes.WithLabelValues(upstream).Add(float64(compressed))
 }
 
 // Interface guards
