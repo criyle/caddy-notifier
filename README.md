@@ -94,12 +94,13 @@ The client sent of `ping` message will be treated as `ping`, and the client sent
 ```json
 {
     "operation": "subscribe",
+    "request_id": "request id",
     "credential": "a string token for authentication",
     "channels": ["a list of string value for channel name"]
 }
 ```
 
-The caddy-notifier will request backend with credential to authenticate, whether subscribe request accepted or rejected. Channel specified channel to be subscribed. (? or reject directly if reach certain subscription limit).
+The caddy-notifier will request backend with credential to authenticate, whether subscribe request accepted or rejected. Channel specified channel to be subscribed. (? or reject directly if reach certain subscription limit). `request_id` will be pass through to the backend.
 
 ##### unsubscribe
 
@@ -153,6 +154,7 @@ When a subscriber subscribes to multiple channel in the list, the event will be 
 ```json
 {
     "connection_id": "identifier to distinct different connections",
+    "request_id": "request id",
     "operation": "subscribe",
     "channels": ["a list of channel_name"],
     "credential": "xxx"

@@ -8,6 +8,7 @@ type subscriberWebSocket = webSocket[SubscriberRequest]
 // SubscriberRequest subscriber -> notifier
 type SubscriberRequest struct {
 	Operation  string   `json:"operation"`
+	RequestId  string   `json:"request_id"`
 	Credential string   `json:"credential,omitempty"`
 	Channels   []string `json:"channels,omitempty"`
 }
@@ -23,6 +24,7 @@ type SubscriberResponse struct {
 type NotifierRequest struct {
 	Operation    string   `json:"operation"`
 	ConnectionId string   `json:"connection_id"`
+	RequestId    string   `json:"request_id"`
 	Channels     []string `json:"channels"`
 	Credential   string   `json:"credential,omitempty"`
 }

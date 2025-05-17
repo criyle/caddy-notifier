@@ -101,6 +101,7 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 		m.idMap[v.conn.id] = v.conn
 		m.upstreamReqChan <- &NotifierRequest{
 			Operation:    "subscribe",
+			RequestId:    v.value.RequestId,
 			ConnectionId: v.conn.id,
 			Channels:     v.value.Channels,
 			Credential:   v.value.Credential,
