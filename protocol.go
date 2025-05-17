@@ -32,6 +32,8 @@ type NotifierResponse struct {
 	Operation    string          `json:"operation"`
 	ConnectionId string          `json:"connection_id,omitempty"`
 	Channels     []string        `json:"channels"`
+	Accept       []string        `json:"accept"`
+	Reject       []string        `json:"reject"`
 	Payload      json.RawMessage `json:"payload,omitempty"`
 	Credential   string          `json:"credential,omitempty"`
 }

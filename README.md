@@ -168,17 +168,18 @@ When a subscriber subscribes to multiple channel in the list, the event will be 
 ```json
 {
     "connection_id": "identifier to distinct different connections",
-    "operation": "accept / reject",
+    "operation": "verify",
     "credential": "credential for the accepted channel, must present if deauthorize requested", 
-    "channels": ["a list of channel_name"],
+    "accept": ["a list of channel_name of accepted channels"],
+    "reject": ["a list of channel_name of rejected channels"],
 }
 ```
 
-##### notify
+##### event
 
 ```json
 {
-    "operation": "notify",
+    "operation": "event",
     "channels": ["a list of channel_name"],
     "payload": { "event contents" }
 }

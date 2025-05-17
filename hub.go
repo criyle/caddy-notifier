@@ -143,11 +143,75 @@ func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
 	delete(m.websocketCred, w)
 }
 
+func (m *messageHub) handleAccept(channels []string, credential string, w *subscriberWebSocket) {
+	for _, c := range channels {
+		if m.websocketChannel[w] == nil {
+			m.websocketChannel[w] = make(map[string]struct{})
+		}
+		m.websocketChannel[w][c] = struct{}{}
+
+		if m.channels[c] == nil {
+			m.channels[c] = make(map[*subscriberWebSocket]struct{})
+		}
+		m.channels[c][w] = struct{}{}
+
+		if m.websocketCred[w] == nil {
+			m.websocketCred[w] = make(map[string]struct{})
+		}
+		m.websocketCred[w][credential] = struct{}{}
+
+		if m.credMap[credential] == nil {
+			m.credMap[credential] = make(map[*subscriberWebSocket]map[string]struct{})
+		}
+		if m.credMap[credential][w] == nil {
+			m.credMap[credential][w] = make(map[string]struct{})
+		}
+		m.credMap[credential][w][c] = struct{}{}
+	}
+	select {
+	case m.workerChan <- &workerRequest{
+		websocket: w,
+		response: &SubscriberResponse{
+			Operation: "subscribe",
+			Channels:  channels,
+		},
+	}:
+	default:
+	}
+}
+
+func (m *messageHub) handleReject(channels []string, w *subscriberWebSocket) {
+	select {
+	case m.workerChan <- &workerRequest{
+		websocket: w,
+		response: &SubscriberResponse{
+			Operation: "unsubscribe",
+			Channels:  channels,
+		},
+	}:
+	default:
+	}
+}
+
 func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 	if v.value == nil {
 		return
 	}
 	switch v.value.Operation {
+	case "verify":
+		w, ok := m.idMap[v.value.ConnectionId]
+		if !ok {
+			return
+		}
+		select {
+		case <-w.done:
+			m.handleSubClose(w)
+			return
+		default:
+		}
+		m.handleAccept(v.value.Accept, v.value.Credential, w)
+		m.handleReject(v.value.Reject, w)
+
 	case "accept":
 		w, ok := m.idMap[v.value.ConnectionId]
 		if !ok {
@@ -159,41 +223,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 			return
 		default:
 		}
-
-		for _, c := range v.value.Channels {
-			if m.websocketChannel[w] == nil {
-				m.websocketChannel[w] = make(map[string]struct{})
-			}
-			m.websocketChannel[w][c] = struct{}{}
-
-			if m.channels[c] == nil {
-				m.channels[c] = make(map[*subscriberWebSocket]struct{})
-			}
-			m.channels[c][w] = struct{}{}
-
-			if m.websocketCred[w] == nil {
-				m.websocketCred[w] = make(map[string]struct{})
-			}
-			m.websocketCred[w][v.value.Credential] = struct{}{}
-
-			if m.credMap[v.value.Credential] == nil {
-				m.credMap[v.value.Credential] = make(map[*subscriberWebSocket]map[string]struct{})
-			}
-			if m.credMap[v.value.Credential][w] == nil {
-				m.credMap[v.value.Credential][w] = make(map[string]struct{})
-			}
-			m.credMap[v.value.Credential][w][c] = struct{}{}
-		}
-		select {
-		case m.workerChan <- &workerRequest{
-			websocket: w,
-			response: &SubscriberResponse{
-				Operation: "subscribe",
-				Channels:  v.value.Channels,
-			},
-		}:
-		default:
-		}
+		m.handleAccept(v.value.Channels, v.value.Credential, w)
 
 	case "reject":
 		w, ok := m.idMap[v.value.ConnectionId]
@@ -206,19 +236,9 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 			return
 		default:
 		}
+		m.handleReject(v.value.Channels, w)
 
-		select {
-		case m.workerChan <- &workerRequest{
-			websocket: w,
-			response: &SubscriberResponse{
-				Operation: "unsubscribe",
-				Channels:  v.value.Channels,
-			},
-		}:
-		default:
-		}
-
-	case "notify":
+	case "event":
 		websocketToNotify := make(map[*subscriberWebSocket]struct{})
 		for _, c := range v.value.Channels {
 			for w := range m.channels[c] {
