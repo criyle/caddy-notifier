@@ -49,6 +49,7 @@ type websocketConfig struct {
 	shortyResetCount int
 	shorty           bool
 	metrics          bool
+	pingText         bool
 }
 
 func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage[T], conf *websocketConfig) *webSocket[T] {
@@ -98,6 +99,12 @@ func (w *webSocket[T]) readLoop(done chan struct{}, inboundChan chan<- inboundMe
 		}
 		// ignore ping
 		if bytes.Equal(data, []byte("ping")) {
+			w.conn.WriteMessage(websocket.TextMessage, []byte("pong"))
+			continue
+		}
+		// update deadline with pong
+		if bytes.Equal(data, []byte("pong")) {
+			w.conn.SetReadDeadline(time.Now().Add(w.config.pongWait))
 			continue
 		}
 		// support shorty
@@ -183,6 +190,11 @@ func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outbound
 			w.conn.SetWriteDeadline(time.Now().Add(w.config.writeWait))
 			if err := w.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
+			}
+			if w.config.pingText {
+				if err := w.conn.WriteMessage(websocket.TextMessage, []byte("ping")); err != nil {
+					return
+				}
 			}
 
 		case <-done:

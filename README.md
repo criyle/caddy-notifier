@@ -72,6 +72,7 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 
         compression shorty
         shorty_reset_count 1000
+        ping_type text # send text "ping" message to subscribers
     }
 }
 ```

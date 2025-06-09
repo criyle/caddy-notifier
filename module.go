@@ -40,6 +40,7 @@ type WebSocketNotifier struct {
 	Headers          *headers.Handler `json:"headers,omitempty"`
 	Compression      string           `json:"compression,omitempty"`
 	ShortyResetCount int              `json:"shorty_reset_count,omitempty"`
+	PingType         string           `json:"ping_type,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -114,6 +115,7 @@ func (m *WebSocketNotifier) Provision(ctx caddy.Context) error {
 		shortyResetCount: m.ShortyResetCount,
 		shorty:           m.Compression == "shorty",
 		metrics:          true,
+		pingText:         m.PingType == "text",
 	}
 	m.upstream = getUpstream(m.Upstream, m)
 
@@ -134,6 +136,9 @@ func (m *WebSocketNotifier) Validate() error {
 	}
 	if m.Compression != "permessage-deflate" && m.Compression != "shorty" && m.Compression != "off" && m.Compression != "" {
 		return fmt.Errorf("bad compression value: %s", m.Compression)
+	}
+	if m.PingType != "control" && m.PingType != "text" && m.PingType != "" {
+		return fmt.Errorf("bad ping type value: %s", m.PingType)
 	}
 	return nil
 }
@@ -163,14 +168,15 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 //
 //	websocket_notifier [<matchers>] [<upstream>] {
 //	  # configurations
-//	  write_wait       <interval>
-//	  pong_wait        <interval>
-//	  ping_interval    <interval>
-//	  max_message_size <size>
-//	  chan_size        <num>
-//	  recovery_wait    <interval>
-//	  compression <permessage-deflate | shorty | off>
-//	  shorty_reset_count <num>
+//	  write_wait       		<interval>
+//	  pong_wait        		<interval>
+//	  ping_interval    		<interval>
+//	  max_message_size 		<size>
+//	  chan_size        		<num>
+//	  recovery_wait    		<interval>
+//	  compression 			<permessage-deflate | shorty | off>
+//	  shorty_reset_count 	<num>
+//	  ping_type				<control | text>
 //
 //	  header_up   [+|-]<field> [<value|regexp> [<replacement>]]
 //	  header_down [+|-]<field> [<value|regexp> [<replacement>]]
@@ -334,6 +340,12 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if err != nil {
 				return d.Err(err.Error())
 			}
+
+		case "ping_type":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			m.PingType = d.Val()
 
 		default:
 			return d.Errf("unrecognized subdirective %s", d.Val())

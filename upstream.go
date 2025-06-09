@@ -47,35 +47,38 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 	upstreamMu.Lock()
 	defer upstreamMu.Unlock()
 
+	var up *upstream
 	if u, ok := upstreamMap[upstreamUrl]; ok {
-		u.count.Add(1)
-		return u
+		up = u
+	} else {
+		up = &upstream{
+			upstreamRespChan:  make(chan inboundMessage[NotifierResponse], m.ChanSize),
+			upstreamReqChan:   make(chan *NotifierRequest, m.ChanSize),
+			subscriberReqChan: make(chan inboundMessage[SubscriberRequest], m.ChanSize),
+			upstream:          upstreamUrl,
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		up.ctx = ctx
+		up.cancel = cancel
 	}
 	repl, ok := m.ctx.Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 	if !ok {
 		repl = caddy.NewReplacer()
 	}
-	u := &upstream{
-		replacer:          repl,
-		logger:            m.logger,
-		websocketConfig:   m.websocketConfig,
-		upstream:          upstreamUrl,
-		recoverWait:       m.RecoverWait,
-		headers:           m.Headers,
-		upstreamRespChan:  make(chan inboundMessage[NotifierResponse], m.ChanSize),
-		upstreamReqChan:   make(chan *NotifierRequest, m.ChanSize),
-		subscriberReqChan: make(chan inboundMessage[SubscriberRequest], m.ChanSize),
+	up.replacer = repl
+	up.logger = m.logger
+	up.websocketConfig = m.websocketConfig
+	up.recoverWait = m.RecoverWait
+	up.headers = m.Headers
+
+	if _, ok := upstreamMap[upstreamUrl]; !ok {
+		go up.upstreamMaintainer()
+		go up.messageProcessor()
+		upstreamMap[upstreamUrl] = up
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	u.ctx = ctx
-	u.cancel = cancel
 
-	go u.upstreamMaintainer()
-	go u.messageProcessor()
-
-	upstreamMap[upstreamUrl] = u
-	u.count.Add(1)
-	return u
+	up.count.Add(1)
+	return up
 }
 
 func removeUpstream(upstreamUrl string) {
@@ -139,6 +142,7 @@ func (u *upstream) dialUpstream() (*upstreamWebSocket, error) {
 	config := *u.websocketConfig
 	config.shorty = false
 	config.metrics = false
+	config.pingText = false
 	return newWebSocket(conn, u.upstreamRespChan, &config), nil
 }
 
