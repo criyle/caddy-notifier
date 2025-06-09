@@ -119,10 +119,13 @@ The caddy-notifier will remove the subscriber from the channel subscription. If 
 
 ```json
 {
-    "operation": "subscribed",
-    "channels": ["a list of channel_name"],
+    "operation": "verify",
+    "accept": ["a list of channel_name"],
+    "reject": ["a list of channel_name"]
 }
 ```
+
+##### unsubscribe results
 
 The caddy-notifier notifies the subscriber on the decision from the authenticator.
 

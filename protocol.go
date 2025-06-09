@@ -17,6 +17,8 @@ type SubscriberRequest struct {
 type SubscriberResponse struct {
 	Operation string          `json:"operation"`
 	Channels  []string        `json:"channels,omitempty"`
+	Accept    []string        `json:"accept"`
+	Reject    []string        `json:"reject"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 

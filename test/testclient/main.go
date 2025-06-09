@@ -52,8 +52,8 @@ func runClient() {
 				return
 			}
 			switch resp.Operation {
-			case "subscribe":
-				log.Println("subscribe: ", resp.Channels)
+			case "verify":
+				log.Println("subscribe: ", resp.Accept)
 			case "event":
 				v := make(map[string]any)
 				err := json.NewDecoder(bytes.NewReader(resp.Payload)).Decode(&v)
