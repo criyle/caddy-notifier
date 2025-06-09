@@ -2,7 +2,7 @@
 	metrics
 }
 
-:6080 {
+:6080 :6040 {
 	websocket_notifier /ws "ws://localhost:6081/ws" {
 		write_wait 10s
 		pong_wait 60s

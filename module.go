@@ -1,9 +1,6 @@
 package caddynotifier
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -52,12 +49,8 @@ type WebSocketNotifier struct {
 	logger          *zap.Logger
 	websocketConfig *websocketConfig
 
-	// upstreams
-	upstreamRespChan chan inboundMessage[NotifierResponse]
-	upstreamReqChan  chan *NotifierRequest
-
-	// subscribers
-	subscriberReqChan chan inboundMessage[SubscriberRequest]
+	// upstream
+	upstream *upstream
 }
 
 const (
@@ -122,22 +115,15 @@ func (m *WebSocketNotifier) Provision(ctx caddy.Context) error {
 		shorty:           m.Compression == "shorty",
 		metrics:          true,
 	}
-
-	m.upstreamRespChan = make(chan inboundMessage[NotifierResponse], m.ChanSize)
-	m.upstreamReqChan = make(chan *NotifierRequest, m.ChanSize)
-
-	m.subscriberReqChan = make(chan inboundMessage[SubscriberRequest], m.ChanSize)
+	m.upstream = getUpstream(m.Upstream, m)
 
 	initCaddyNotifierMetrics(ctx.GetMetricsRegistry())
-
-	go m.upstreamMaintainer()
-	go m.messageProcessor()
-
 	return nil
 }
 
 // Cleanup implements caddy.CleanerUpper
 func (m *WebSocketNotifier) Cleanup() error {
+	removeUpstream(m.Upstream)
 	return nil
 }
 
@@ -169,7 +155,7 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 
 	// it will start read / write loop internally, and the message processor
 	// take care of the messages, so no need to maintain any state
-	_ = newWebSocket(conn, m.subscriberReqChan, m.websocketConfig)
+	_ = newWebSocket(conn, m.upstream.subscriberReqChan, m.websocketConfig)
 	return nil
 }
 
@@ -361,107 +347,6 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 	var m WebSocketNotifier
 	err := m.UnmarshalCaddyfile(h.Dispenser)
 	return &m, err
-}
-
-func (m *WebSocketNotifier) upstreamMaintainer() {
-	recoverWait := time.Duration(m.RecoverWait)
-	if recoverWait == 0 {
-		recoverWait = defaultRecoverWait
-	}
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		default:
-		}
-		recoverWait := time.After(recoverWait)
-		w, err := m.dialUpstream()
-		if err != nil {
-			caddyNotifierMetrics.upstreamStatus.WithLabelValues(m.Upstream).Set(0.0)
-			if c := m.logger.Check(zap.InfoLevel, "connect to upstream failed"); c != nil {
-				c.Write(zap.String("upstream", m.Upstream), zap.Error(err))
-			}
-		} else {
-			caddyNotifierMetrics.upstreamStatus.WithLabelValues(m.Upstream).Set(1.0)
-			m.pumpMessage(w)
-			if c := m.logger.Check(zap.InfoLevel, "upstream disconnected"); c != nil {
-				c.Write(zap.String("upstream", m.Upstream), zap.Error(w.err))
-			}
-		}
-
-		select {
-		case <-m.ctx.Done():
-			return
-
-		case <-recoverWait:
-		}
-	}
-}
-
-func (m *WebSocketNotifier) dialUpstream() (*upstreamWebSocket, error) {
-	ctx, cancel := context.WithTimeout(m.ctx, defaultRecoverWait)
-	defer cancel()
-
-	repl, ok := m.ctx.Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
-	if !ok {
-		repl = caddy.NewReplacer()
-	}
-
-	h := make(http.Header)
-	m.Headers.Request.ApplyTo(h, repl)
-
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, m.Upstream, h)
-	if err != nil {
-		return nil, err
-	}
-	config := *m.websocketConfig
-	config.shorty = false
-	config.metrics = false
-	return newWebSocket(conn, m.upstreamRespChan, &config), nil
-}
-
-func (m *WebSocketNotifier) pumpMessage(w *upstreamWebSocket) {
-	defer w.Close()
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-
-		case <-w.done:
-			return
-
-		case v := <-m.upstreamReqChan:
-			buf := new(bytes.Buffer)
-			if err := json.NewEncoder(buf).Encode(v); err != nil {
-				return
-			}
-			w.outboundChan <- &outboundMessage{messageType: websocket.TextMessage, data: buf.Bytes()}
-		}
-	}
-}
-
-func (m *WebSocketNotifier) messageProcessor() {
-	hub := newMessageHub(m.upstreamReqChan)
-	defer hub.Close()
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-
-		case v := <-m.subscriberReqChan:
-			hub.handleSubReq(v)
-
-		case v := <-m.upstreamRespChan:
-			hub.handleUpstreamResp(v)
-
-		case <-ticker.C:
-			updateMetrics(hub, m.Upstream)
-		}
-	}
 }
 
 func updateMetrics(hub *messageHub, upstream string) {
