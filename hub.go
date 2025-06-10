@@ -122,6 +122,12 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 			}
 			delete(m.websocketChannel[v.conn], c)
 		}
+		m.upstreamReqChan <- &NotifierRequest{
+			Operation:    "unsubscribe",
+			RequestId:    v.value.RequestId,
+			ConnectionId: v.conn.id,
+			Channels:     v.value.Channels,
+		}
 	}
 }
 

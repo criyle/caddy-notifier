@@ -108,6 +108,7 @@ The caddy-notifier will request backend with credential to authenticate, whether
 ```json
 {
     "operation": "unsubscribe",
+    "request_id": "request id",
     "channels": ["a list of string values for channel name"]
 }
 ```
@@ -137,7 +138,7 @@ The caddy-notifier notifies the subscriber on the decision from the authenticato
 }
 ```
 
-Rejected or de-authorized sent out `unsubscribed` events.
+De-authorized sent out `unsubscribed` events.
 
 ##### Events
 
@@ -165,7 +166,18 @@ When a subscriber subscribes to multiple channel in the list, the event will be 
 }
 ```
 
-? Do we want to notify backend about unsubscribes?
+##### unsubscribe
+
+The caddy-notifier notifies the subscriber on the decision from the authenticator.
+
+```json
+{
+    "connection_id": "identifier to distinct different connections",
+    "request_id": "request id",
+    "operation": "unsubscribed",
+    "channels": ["a list of channel_name"],
+}
+```
 
 #### backend to caddy-notifier
 
