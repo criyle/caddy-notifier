@@ -179,6 +179,17 @@ The caddy-notifier notifies the subscriber on the decision from the authenticato
 }
 ```
 
+##### resume
+
+The caddy-notifier sends `resume` with list of channels that have been subscribed when reconnected to the back-end.
+
+```json
+{
+    "operation": "resume",
+    "channels": ["a list of channels that being subscribed"]
+}
+```
+
 #### backend to caddy-notifier
 
 ##### subscribe result

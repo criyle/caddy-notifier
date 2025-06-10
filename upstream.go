@@ -28,6 +28,7 @@ type upstream struct {
 	// upstreams
 	upstreamRespChan chan inboundMessage[NotifierResponse]
 	upstreamReqChan  chan *NotifierRequest
+	upstreamResume   chan struct{}
 
 	// subscribers
 	subscriberReqChan chan inboundMessage[SubscriberRequest]
@@ -55,6 +56,7 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 			upstreamRespChan:  make(chan inboundMessage[NotifierResponse], m.ChanSize),
 			upstreamReqChan:   make(chan *NotifierRequest, m.ChanSize),
 			subscriberReqChan: make(chan inboundMessage[SubscriberRequest], m.ChanSize),
+			upstreamResume:    make(chan struct{}, m.ChanSize),
 			upstream:          upstreamUrl,
 		}
 		ctx, cancel := context.WithCancel(context.Background())
@@ -148,6 +150,7 @@ func (u *upstream) dialUpstream() (*upstreamWebSocket, error) {
 
 func (u *upstream) pumpMessage(w *upstreamWebSocket) {
 	defer w.Close()
+	u.upstreamResume <- struct{}{}
 	for {
 		select {
 		case <-u.ctx.Done():
@@ -183,6 +186,9 @@ func (u *upstream) messageProcessor() {
 
 		case v := <-u.upstreamRespChan:
 			hub.handleUpstreamResp(v)
+
+		case <-u.upstreamResume:
+			hub.handleUpstreamResume()
 
 		case <-ticker.C:
 			updateMetrics(hub, u.upstream)

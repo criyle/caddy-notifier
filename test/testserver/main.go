@@ -63,7 +63,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 				log.Println("writejson2: ", err)
 				return
 			}
-			if i%5 == 0 {
+			if i%50 == 0 {
 				res = &caddynotifier.NotifierResponse{
 					Operation:  "deauthorize",
 					Credential: req.Credential,
@@ -75,6 +75,8 @@ func ws(w http.ResponseWriter, r *http.Request) {
 				}
 				log.Println("deauthorize")
 			}
+		case "resume":
+			log.Println("resume", req.Channels)
 		}
 		i++
 	}

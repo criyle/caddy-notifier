@@ -256,3 +256,14 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 		delete(m.credMap, v.value.Credential)
 	}
 }
+
+func (m *messageHub) handleUpstreamResume() {
+	ch := make([]string, 0, len(m.channels))
+	for k := range m.channels {
+		ch = append(ch, k)
+	}
+	m.upstreamReqChan <- &NotifierRequest{
+		Operation: "resume",
+		Channels:  ch,
+	}
+}
