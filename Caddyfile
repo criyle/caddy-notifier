@@ -14,9 +14,9 @@
 		header_up +TEST_HEADER "value"
 		header_down -TEST_HEADER "value"
 
-		meta remote_host "{remote_host}"
-		meta remote_port "{remote_port}"
-		meta ua "{header.user-agent}"
+		metadata remote_host "{remote_host}"
+		metadata remote_port "{remote_port}"
+		metadata ua "{header.user-agent}"
 	
 		compression shorty
 		shorty_reset_count 1000

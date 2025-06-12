@@ -29,7 +29,7 @@ type NotifierRequest struct {
 	RequestId    string            `json:"request_id,omitempty"`
 	Channels     []string          `json:"channels,omitempty"`
 	Credential   string            `json:"credential,omitempty"`
-	Meta         map[string]string `json:"meta,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 // NotifierResponse backend -> notifier

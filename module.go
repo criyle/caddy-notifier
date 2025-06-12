@@ -41,7 +41,7 @@ type WebSocketNotifier struct {
 	Compression      string            `json:"compression,omitempty"`
 	ShortyResetCount int               `json:"shorty_reset_count,omitempty"`
 	PingType         string            `json:"ping_type,omitempty"`
-	Meta             map[string]string `json:"meta,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -181,7 +181,7 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 //
 //	  header_up   [+|-]<field> [<value|regexp> [<replacement>]]
 //	  header_down [+|-]<field> [<value|regexp> [<replacement>]]
-//	  meta					<key>	<replacement>
+//	  metadata				<key>	<replacement>
 //	}
 func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // consume directive name
@@ -349,17 +349,17 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			}
 			m.PingType = d.Val()
 
-		case "meta":
-			if m.Meta == nil {
-				m.Meta = make(map[string]string)
+		case "metadata":
+			if m.Metadata == nil {
+				m.Metadata = make(map[string]string)
 			}
 			args := d.RemainingArgs()
 			switch len(args) {
 			case 2:
-				if _, ok := m.Meta[args[0]]; ok {
-					return d.Errf("duplicated meta key: %s", args[0])
+				if _, ok := m.Metadata[args[0]]; ok {
+					return d.Errf("duplicated metadata key: %s", args[0])
 				}
-				m.Meta[args[0]] = args[1]
+				m.Metadata[args[0]] = args[1]
 
 			default:
 				return d.ArgErr()
