@@ -24,6 +24,9 @@ type messageHub struct {
 	// workerChan
 	workerChan chan *workerRequest
 
+	// meta to be add to subscribe
+	meta map[string]string
+
 	// metrics
 	eventSent          int64
 	subscribeRequested int64
@@ -35,7 +38,7 @@ type workerRequest struct {
 	response   *SubscriberResponse
 }
 
-func newMessageHub(upstreamReqChan chan *NotifierRequest) *messageHub {
+func newMessageHub(upstreamReqChan chan *NotifierRequest, meta map[string]string) *messageHub {
 	workerCount := 4
 	if cur := runtime.GOMAXPROCS(0); cur < workerCount {
 		workerCount = cur
@@ -49,6 +52,7 @@ func newMessageHub(upstreamReqChan chan *NotifierRequest) *messageHub {
 		credMap:          make(map[string]map[*subscriberWebSocket]map[string]struct{}),
 		upstreamReqChan:  upstreamReqChan,
 		workerChan:       make(chan *workerRequest, 256),
+		meta:             meta,
 	}
 
 	for range workerCount {
@@ -98,6 +102,14 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 	}
 	switch v.value.Operation {
 	case "subscribe":
+		var meta map[string]string
+		if m.meta != nil {
+			meta = map[string]string{}
+			for key, value := range m.meta {
+				meta[key] = v.conn.replacer.ReplaceKnown(value, "")
+			}
+		}
+
 		m.idMap[v.conn.id] = v.conn
 		m.upstreamReqChan <- &NotifierRequest{
 			Operation:    "subscribe",
@@ -105,6 +117,7 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 			ConnectionId: v.conn.id,
 			Channels:     v.value.Channels,
 			Credential:   v.value.Credential,
+			Meta:         meta,
 		}
 		m.subscribeRequested += int64(len(v.value.Channels))
 

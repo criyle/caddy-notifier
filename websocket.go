@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/caddyserver/caddy/v2"
 	"github.com/criyle/caddy-notifier/shorty"
 	"github.com/gorilla/websocket"
 )
@@ -20,6 +21,7 @@ type webSocket[T any] struct {
 	conn         *websocket.Conn
 	outboundChan chan<- *outboundMessage
 	config       *websocketConfig
+	replacer     *caddy.Replacer
 	err          error
 	done         <-chan struct{}
 	id           string
@@ -52,7 +54,7 @@ type websocketConfig struct {
 	pingText         bool
 }
 
-func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage[T], conf *websocketConfig) *webSocket[T] {
+func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage[T], conf *websocketConfig, repl *caddy.Replacer) *webSocket[T] {
 	outC := make(chan *outboundMessage, conf.chanSize)
 	done := make(chan struct{})
 	w := &webSocket[T]{
@@ -61,6 +63,7 @@ func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage
 		config:       conf,
 		done:         done,
 		id:           conn.RemoteAddr().String(),
+		replacer:     repl,
 	}
 	go w.readLoop(done, inboundChan)
 	go w.writeLoop(done, outC)

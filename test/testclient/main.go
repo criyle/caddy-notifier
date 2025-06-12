@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -13,7 +14,9 @@ import (
 )
 
 func runClient() {
-	c, _, err := websocket.DefaultDialer.Dial("ws://localhost:6080/ws", nil)
+	h := make(http.Header)
+	h.Add("User-Agent", "testclient")
+	c, _, err := websocket.DefaultDialer.Dial("ws://localhost:6080/ws", h)
 	if err != nil {
 		log.Println("dial: ", err)
 		return

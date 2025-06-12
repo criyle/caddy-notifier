@@ -24,11 +24,12 @@ type SubscriberResponse struct {
 
 // NotifierRequest notifier -> backend
 type NotifierRequest struct {
-	Operation    string   `json:"operation"`
-	ConnectionId string   `json:"connection_id,omitempty"`
-	RequestId    string   `json:"request_id,omitempty"`
-	Channels     []string `json:"channels,omitempty"`
-	Credential   string   `json:"credential,omitempty"`
+	Operation    string            `json:"operation"`
+	ConnectionId string            `json:"connection_id,omitempty"`
+	RequestId    string            `json:"request_id,omitempty"`
+	Channels     []string          `json:"channels,omitempty"`
+	Credential   string            `json:"credential,omitempty"`
+	Meta         map[string]string `json:"meta,omitempty"`
 }
 
 // NotifierResponse backend -> notifier

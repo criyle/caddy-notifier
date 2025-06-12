@@ -30,17 +30,18 @@ func init() {
 // controller service
 type WebSocketNotifier struct {
 	// Upstream address for the backend controller
-	Upstream         string           `json:"upstream,omitempty"`
-	WriteWait        caddy.Duration   `json:"write_wait,omitempty"`
-	PongWait         caddy.Duration   `json:"pong_wait,omitempty"`
-	PingInterval     caddy.Duration   `json:"ping_interval,omitempty"`
-	MaxMessageSize   int64            `json:"max_message_size,omitempty"`
-	ChanSize         int              `json:"chan_size,omitempty"`
-	RecoverWait      caddy.Duration   `json:"recover_wait,omitempty"`
-	Headers          *headers.Handler `json:"headers,omitempty"`
-	Compression      string           `json:"compression,omitempty"`
-	ShortyResetCount int              `json:"shorty_reset_count,omitempty"`
-	PingType         string           `json:"ping_type,omitempty"`
+	Upstream         string            `json:"upstream,omitempty"`
+	WriteWait        caddy.Duration    `json:"write_wait,omitempty"`
+	PongWait         caddy.Duration    `json:"pong_wait,omitempty"`
+	PingInterval     caddy.Duration    `json:"ping_interval,omitempty"`
+	MaxMessageSize   int64             `json:"max_message_size,omitempty"`
+	ChanSize         int               `json:"chan_size,omitempty"`
+	RecoverWait      caddy.Duration    `json:"recover_wait,omitempty"`
+	Headers          *headers.Handler  `json:"headers,omitempty"`
+	Compression      string            `json:"compression,omitempty"`
+	ShortyResetCount int               `json:"shorty_reset_count,omitempty"`
+	PingType         string            `json:"ping_type,omitempty"`
+	Meta             map[string]string `json:"meta,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -160,7 +161,7 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 
 	// it will start read / write loop internally, and the message processor
 	// take care of the messages, so no need to maintain any state
-	_ = newWebSocket(conn, m.upstream.subscriberReqChan, m.websocketConfig)
+	_ = newWebSocket(conn, m.upstream.subscriberReqChan, m.websocketConfig, repl)
 	return nil
 }
 
@@ -180,6 +181,7 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 //
 //	  header_up   [+|-]<field> [<value|regexp> [<replacement>]]
 //	  header_down [+|-]<field> [<value|regexp> [<replacement>]]
+//	  meta					<key>	<replacement>
 //	}
 func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // consume directive name
@@ -346,6 +348,22 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.ArgErr()
 			}
 			m.PingType = d.Val()
+
+		case "meta":
+			if m.Meta == nil {
+				m.Meta = make(map[string]string)
+			}
+			args := d.RemainingArgs()
+			switch len(args) {
+			case 2:
+				if _, ok := m.Meta[args[0]]; ok {
+					return d.Errf("duplicated meta key: %s", args[0])
+				}
+				m.Meta[args[0]] = args[1]
+
+			default:
+				return d.ArgErr()
+			}
 
 		default:
 			return d.Errf("unrecognized subdirective %s", d.Val())

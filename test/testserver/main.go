@@ -43,6 +43,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 				log.Println("writejson: ", err)
 				return
 			}
+			log.Println("subscribe: ", req.ConnectionId, req.Meta)
 
 			var buf bytes.Buffer
 			err = json.NewEncoder(&buf).Encode(map[string]any{

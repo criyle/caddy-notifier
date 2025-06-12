@@ -73,6 +73,8 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
         compression shorty
         shorty_reset_count 1000
         ping_type text # send text "ping" message to subscribers
+
+        meta key "value"
     }
 }
 ```
@@ -162,7 +164,8 @@ When a subscriber subscribes to multiple channel in the list, the event will be 
     "request_id": "request id",
     "operation": "subscribe",
     "channels": ["a list of channel_name"],
-    "credential": "xxx"
+    "credential": "xxx",
+    "meta": {"meta_key": "meta_value"}
 }
 ```
 

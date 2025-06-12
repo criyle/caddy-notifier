@@ -24,6 +24,7 @@ type upstream struct {
 	upstream    string
 	recoverWait caddy.Duration
 	headers     *headers.Handler
+	meta        map[string]string
 
 	// upstreams
 	upstreamRespChan chan inboundMessage[NotifierResponse]
@@ -72,6 +73,7 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 	up.websocketConfig = m.websocketConfig
 	up.recoverWait = m.RecoverWait
 	up.headers = m.Headers
+	up.meta = m.Meta
 
 	if _, ok := upstreamMap[upstreamUrl]; !ok {
 		go up.upstreamMaintainer()
@@ -145,7 +147,7 @@ func (u *upstream) dialUpstream() (*upstreamWebSocket, error) {
 	config.shorty = false
 	config.metrics = false
 	config.pingText = false
-	return newWebSocket(conn, u.upstreamRespChan, &config), nil
+	return newWebSocket(conn, u.upstreamRespChan, &config, u.replacer), nil
 }
 
 func (u *upstream) pumpMessage(w *upstreamWebSocket) {
@@ -170,7 +172,7 @@ func (u *upstream) pumpMessage(w *upstreamWebSocket) {
 }
 
 func (u *upstream) messageProcessor() {
-	hub := newMessageHub(u.upstreamReqChan)
+	hub := newMessageHub(u.upstreamReqChan, u.meta)
 	defer hub.Close()
 
 	ticker := time.NewTicker(10 * time.Second)
