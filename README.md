@@ -171,13 +171,11 @@ When a subscriber subscribes to multiple channel in the list, the event will be 
 
 ##### unsubscribe
 
-The caddy-notifier notifies the subscriber on the decision from the authenticator.
+When last subscriber of a list of subscriber desubscribed / deauthorized / disconnected, the backend will be notified with `unsubscibe` so that backend is acknowledge there's no longer a subscriber to a specific channel.
 
 ```json
 {
     "connection_id": "identifier to distinct different connections",
-    "request_id": "request id",
-    "operation": "unsubscribed",
     "channels": ["a list of channel_name"],
 }
 ```

@@ -125,6 +125,7 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 		if m.websocketChannel[v.conn] == nil {
 			return
 		}
+		ch := make([]string, 0, len(v.value.Channels))
 		for _, c := range v.value.Channels {
 			if _, ok := m.websocketChannel[v.conn][c]; !ok {
 				continue
@@ -132,23 +133,26 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 			delete(m.channels[c], v.conn)
 			if len(m.channels[c]) == 0 {
 				delete(m.channels, c)
+				ch = append(ch, c)
 			}
 			delete(m.websocketChannel[v.conn], c)
 		}
-		m.upstreamReqChan <- &NotifierRequest{
-			Operation:    "unsubscribe",
-			RequestId:    v.value.RequestId,
-			ConnectionId: v.conn.id,
-			Channels:     v.value.Channels,
+		if len(ch) > 0 {
+			m.upstreamReqChan <- &NotifierRequest{
+				Operation: "unsubscribe",
+				Channels:  ch,
+			}
 		}
 	}
 }
 
 func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
+	ch := make([]string, 0, len(m.websocketChannel[w]))
 	for c := range m.websocketChannel[w] {
 		delete(m.channels[c], w)
 		if len(m.channels[c]) == 0 {
 			delete(m.channels, c)
+			ch = append(ch, c)
 		}
 	}
 	for cred := range m.websocketCred[w] {
@@ -161,6 +165,13 @@ func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
 	delete(m.idMap, w.id)
 	delete(m.websocketChannel, w)
 	delete(m.websocketCred, w)
+
+	if len(ch) > 0 {
+		m.upstreamReqChan <- &NotifierRequest{
+			Operation: "unsubscribe",
+			Channels:  ch,
+		}
+	}
 }
 
 func (m *messageHub) handleAccept(channels []string, credential string, w *subscriberWebSocket) {
@@ -243,6 +254,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 		m.eventSent += int64(len(websocketToNotify))
 
 	case "deauthorize":
+		ch := make([]string, 0)
 		for w, channels := range m.credMap[v.value.Credential] {
 			ch := make([]string, 0, len(channels))
 			for c := range channels {
@@ -250,6 +262,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 				delete(m.channels[c], w)
 				if len(m.channels[c]) == 0 {
 					delete(m.channels, c)
+					ch = append(ch, c)
 				}
 				delete(m.websocketChannel[w], c)
 			}
@@ -267,6 +280,12 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 			}
 		}
 		delete(m.credMap, v.value.Credential)
+		if len(ch) > 0 {
+			m.upstreamReqChan <- &NotifierRequest{
+				Operation: "unsubscribe",
+				Channels:  ch,
+			}
+		}
 	}
 }
 
