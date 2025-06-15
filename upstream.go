@@ -26,6 +26,8 @@ type upstream struct {
 	headers     *headers.Handler
 	metadata    map[string]string
 
+	channelCategory []ChannelCategory
+
 	// upstreams
 	upstreamRespChan chan inboundMessage[NotifierResponse]
 	upstreamReqChan  chan *NotifierRequest
@@ -74,6 +76,7 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 	up.recoverWait = m.RecoverWait
 	up.headers = m.Headers
 	up.metadata = m.Metadata
+	up.channelCategory = m.ChannelCategory
 
 	if _, ok := upstreamMap[upstreamUrl]; !ok {
 		go up.upstreamMaintainer()
@@ -172,7 +175,7 @@ func (u *upstream) pumpMessage(w *upstreamWebSocket) {
 }
 
 func (u *upstream) messageProcessor() {
-	hub := newMessageHub(u.upstreamReqChan, u.metadata)
+	hub := newMessageHub(u.upstreamReqChan, u.metadata, u.channelCategory)
 	defer hub.Close()
 
 	ticker := time.NewTicker(10 * time.Second)

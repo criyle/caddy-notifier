@@ -38,6 +38,7 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
    6. inbound message size (`websocket_inbound_bytes_total`)
    7. outbound message size (`websocket_outbound_bytes_total`)
    8. outbound compressed message size (`websocket_outbound_compressed_bytes_total`)
+   9. number of subscriber in channel per category (defined by `channel_category`) (`subscriber_count`)
 
 ### Safety Considerations
 
@@ -75,6 +76,7 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
         ping_type text # send text "ping" message to subscribers
 
         metadata key "value"
+        channel_category "regexp" "category"
     }
 }
 ```

@@ -17,6 +17,7 @@ var caddyNotifierMetrics = struct {
 	websocketInboundBytes    *prometheus.CounterVec
 	websocketOutboundBytes   *prometheus.CounterVec
 	websocketCompressedBytes *prometheus.CounterVec
+	categorizedSubscriber    *prometheus.GaugeVec
 }{}
 
 func initCaddyNotifierMetrics(registry *prometheus.Registry) {
@@ -72,17 +73,50 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 			Name:      "websocket_outbound_compressed_bytes_total",
 			Help:      "Total websocket outbound message size after compressed by shorty",
 		}, labels)
+		caddyNotifierMetrics.categorizedSubscriber = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "subscriber_count",
+			Help:      "The number of subscriber of channels in each category",
+		}, []string{"upstream", "category"})
 	})
 	for _, c := range []prometheus.Collector{
 		caddyNotifierMetrics.eventSent, caddyNotifierMetrics.subscribeRequest,
 		caddyNotifierMetrics.activeConnection, caddyNotifierMetrics.channelCount,
 		caddyNotifierMetrics.upstreamStatus, caddyNotifierMetrics.websocketInboundBytes,
-		caddyNotifierMetrics.websocketOutboundBytes, caddyNotifierMetrics.websocketCompressedBytes} {
+		caddyNotifierMetrics.websocketOutboundBytes, caddyNotifierMetrics.websocketCompressedBytes,
+		caddyNotifierMetrics.categorizedSubscriber} {
 		if err := registry.Register(c); err != nil && !errors.Is(err, prometheus.AlreadyRegisteredError{
 			ExistingCollector: c,
 			NewCollector:      c,
 		}) {
 			panic(err)
 		}
+	}
+}
+
+func updateMetrics(hub *messageHub, upstream string) {
+	caddyNotifierMetrics.eventSent.WithLabelValues(upstream).Add(float64(hub.eventSent))
+	hub.eventSent = 0
+	caddyNotifierMetrics.subscribeRequest.WithLabelValues(upstream).Add(float64(hub.subscribeRequested))
+	hub.subscribeRequested = 0
+	caddyNotifierMetrics.activeConnection.WithLabelValues(upstream).Set(float64(len(hub.websocketChannel)))
+	caddyNotifierMetrics.channelCount.WithLabelValues(upstream).Set(float64(len(hub.channels)))
+	inbound := websocketInboundBytes.Swap(0)
+	caddyNotifierMetrics.websocketInboundBytes.WithLabelValues(upstream).Add(float64(inbound))
+	outbound := websocketOutboundBytes.Swap(0)
+	caddyNotifierMetrics.websocketOutboundBytes.WithLabelValues(upstream).Add(float64(outbound))
+	compressed := websocketCompressedBytes.Swap(0)
+	caddyNotifierMetrics.websocketCompressedBytes.WithLabelValues(upstream).Add(float64(compressed))
+	updateCategorySubscriber(hub, upstream)
+}
+
+func updateCategorySubscriber(hub *messageHub, upstream string) {
+	counts := make(map[string]int, len(hub.channelCategory))
+	for ch, cate := range hub.channelCategoryMap {
+		counts[cate] += len(hub.channels[ch])
+	}
+	for cate := range hub.categorySet {
+		caddyNotifierMetrics.categorizedSubscriber.WithLabelValues(upstream, cate).Set(float64(counts[cate]))
 	}
 }

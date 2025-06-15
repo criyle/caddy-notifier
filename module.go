@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,7 @@ type WebSocketNotifier struct {
 	ShortyResetCount int               `json:"shorty_reset_count,omitempty"`
 	PingType         string            `json:"ping_type,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
+	ChannelCategory  []ChannelCategory `json:"channel_category,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -53,6 +55,13 @@ type WebSocketNotifier struct {
 
 	// upstream
 	upstream *upstream
+}
+
+type ChannelCategory struct {
+	Match    string `json:"match,omitempty"`
+	Category string `json:"category,omitempty"`
+
+	re *regexp.Regexp
 }
 
 const (
@@ -103,6 +112,13 @@ func (m *WebSocketNotifier) Provision(ctx caddy.Context) error {
 		if err != nil {
 			return fmt.Errorf("provisioning embedded headers handler: %v", err)
 		}
+	}
+	for i, cc := range m.ChannelCategory {
+		re, err := regexp.Compile(cc.Match)
+		if err != nil {
+			return fmt.Errorf("provisioning channel_category: %v", err)
+		}
+		m.ChannelCategory[i].re = re
 	}
 
 	m.ctx = ctx
@@ -182,6 +198,7 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 //	  header_up   [+|-]<field> [<value|regexp> [<replacement>]]
 //	  header_down [+|-]<field> [<value|regexp> [<replacement>]]
 //	  metadata				<key>	<replacement>
+//	  channel_category		<regexp>	category
 //	}
 func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // consume directive name
@@ -365,6 +382,22 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.ArgErr()
 			}
 
+		case "channel_category":
+			if m.ChannelCategory == nil {
+				m.ChannelCategory = make([]ChannelCategory, 0)
+			}
+			args := d.RemainingArgs()
+			switch len(args) {
+			case 2:
+				m.ChannelCategory = append(m.ChannelCategory, ChannelCategory{
+					Match:    args[0],
+					Category: args[1],
+				})
+
+			default:
+				return d.ArgErr()
+			}
+
 		default:
 			return d.Errf("unrecognized subdirective %s", d.Val())
 		}
@@ -377,21 +410,6 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 	var m WebSocketNotifier
 	err := m.UnmarshalCaddyfile(h.Dispenser)
 	return &m, err
-}
-
-func updateMetrics(hub *messageHub, upstream string) {
-	caddyNotifierMetrics.eventSent.WithLabelValues(upstream).Add(float64(hub.eventSent))
-	hub.eventSent = 0
-	caddyNotifierMetrics.subscribeRequest.WithLabelValues(upstream).Add(float64(hub.subscribeRequested))
-	hub.subscribeRequested = 0
-	caddyNotifierMetrics.activeConnection.WithLabelValues(upstream).Set(float64(len(hub.websocketChannel)))
-	caddyNotifierMetrics.channelCount.WithLabelValues(upstream).Set(float64(len(hub.channels)))
-	inbound := websocketInboundBytes.Swap(0)
-	caddyNotifierMetrics.websocketInboundBytes.WithLabelValues(upstream).Add(float64(inbound))
-	outbound := websocketOutboundBytes.Swap(0)
-	caddyNotifierMetrics.websocketOutboundBytes.WithLabelValues(upstream).Add(float64(outbound))
-	compressed := websocketCompressedBytes.Swap(0)
-	caddyNotifierMetrics.websocketCompressedBytes.WithLabelValues(upstream).Add(float64(compressed))
 }
 
 // Interface guards

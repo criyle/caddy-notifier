@@ -27,6 +27,13 @@ type messageHub struct {
 	// metadata to be add to subscribe
 	metadata map[string]string
 
+	// metrics categories
+	channelCategory []ChannelCategory
+	// channel -> category
+	channelCategoryMap map[string]string
+	// category that exists
+	categorySet map[string]struct{}
+
 	// metrics
 	eventSent          int64
 	subscribeRequested int64
@@ -38,21 +45,24 @@ type workerRequest struct {
 	response   *SubscriberResponse
 }
 
-func newMessageHub(upstreamReqChan chan *NotifierRequest, metadata map[string]string) *messageHub {
+func newMessageHub(upstreamReqChan chan *NotifierRequest, metadata map[string]string, channelCategory []ChannelCategory) *messageHub {
 	workerCount := 4
 	if cur := runtime.GOMAXPROCS(0); cur < workerCount {
 		workerCount = cur
 	}
 
 	hub := &messageHub{
-		websocketChannel: make(map[*subscriberWebSocket]map[string]struct{}),
-		channels:         make(map[string]map[*subscriberWebSocket]struct{}),
-		idMap:            make(map[string]*subscriberWebSocket),
-		websocketCred:    make(map[*subscriberWebSocket]map[string]struct{}),
-		credMap:          make(map[string]map[*subscriberWebSocket]map[string]struct{}),
-		upstreamReqChan:  upstreamReqChan,
-		workerChan:       make(chan *workerRequest, 256),
-		metadata:         metadata,
+		websocketChannel:   make(map[*subscriberWebSocket]map[string]struct{}),
+		channels:           make(map[string]map[*subscriberWebSocket]struct{}),
+		idMap:              make(map[string]*subscriberWebSocket),
+		websocketCred:      make(map[*subscriberWebSocket]map[string]struct{}),
+		credMap:            make(map[string]map[*subscriberWebSocket]map[string]struct{}),
+		upstreamReqChan:    upstreamReqChan,
+		workerChan:         make(chan *workerRequest, 256),
+		metadata:           metadata,
+		channelCategory:    channelCategory,
+		channelCategoryMap: make(map[string]string),
+		categorySet:        make(map[string]struct{}),
 	}
 
 	for range workerCount {
@@ -133,6 +143,7 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 			delete(m.channels[c], v.conn)
 			if len(m.channels[c]) == 0 {
 				delete(m.channels, c)
+				delete(m.channelCategoryMap, c)
 				ch = append(ch, c)
 			}
 			delete(m.websocketChannel[v.conn], c)
@@ -152,6 +163,7 @@ func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
 		delete(m.channels[c], w)
 		if len(m.channels[c]) == 0 {
 			delete(m.channels, c)
+			delete(m.channelCategoryMap, c)
 			ch = append(ch, c)
 		}
 	}
@@ -183,6 +195,13 @@ func (m *messageHub) handleAccept(channels []string, credential string, w *subsc
 
 		if m.channels[c] == nil {
 			m.channels[c] = make(map[*subscriberWebSocket]struct{})
+			for _, cate := range m.channelCategory {
+				if cate.re.Match([]byte(c)) {
+					m.channelCategoryMap[c] = cate.Category
+					m.categorySet[cate.Category] = struct{}{}
+					break
+				}
+			}
 		}
 		m.channels[c][w] = struct{}{}
 
@@ -262,6 +281,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 				delete(m.channels[c], w)
 				if len(m.channels[c]) == 0 {
 					delete(m.channels, c)
+					delete(m.channelCategoryMap, c)
 					ch = append(ch, c)
 				}
 				delete(m.websocketChannel[w], c)

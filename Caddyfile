@@ -21,5 +21,8 @@
 		compression shorty
 		shorty_reset_count 1000
 		ping_type text
+
+		channel_category all all
+		channel_category ".*" other
 	}
 }
