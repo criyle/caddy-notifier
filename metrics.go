@@ -10,8 +10,10 @@ import (
 var caddyNotifierMetrics = struct {
 	once                     sync.Once
 	eventSent                *prometheus.CounterVec
+	eventRequested           *prometheus.CounterVec
 	subscribeRequest         *prometheus.CounterVec
 	activeConnection         *prometheus.GaugeVec
+	activeSubscription       *prometheus.GaugeVec
 	channelCount             *prometheus.GaugeVec
 	upstreamStatus           *prometheus.GaugeVec
 	websocketInboundBytes    *prometheus.CounterVec
@@ -31,6 +33,12 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 			Name:      "event_sent_total",
 			Help:      "The number of event sent to websocket subscribers",
 		}, labels)
+		caddyNotifierMetrics.eventRequested = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "event_requested_total",
+			Help:      "The number of event requested from backend",
+		}, labels)
 		caddyNotifierMetrics.subscribeRequest = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns,
 			Subsystem: sub,
@@ -42,6 +50,12 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 			Subsystem: sub,
 			Name:      "active_connection",
 			Help:      "The number of active websocket connection from websocket subscriber",
+		}, labels)
+		caddyNotifierMetrics.activeSubscription = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "active_subscription",
+			Help:      "The number of active subscription from websocket subscriber",
 		}, labels)
 		caddyNotifierMetrics.channelCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: ns,
@@ -85,7 +99,8 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 		caddyNotifierMetrics.activeConnection, caddyNotifierMetrics.channelCount,
 		caddyNotifierMetrics.upstreamStatus, caddyNotifierMetrics.websocketInboundBytes,
 		caddyNotifierMetrics.websocketOutboundBytes, caddyNotifierMetrics.websocketCompressedBytes,
-		caddyNotifierMetrics.categorizedSubscriber} {
+		caddyNotifierMetrics.categorizedSubscriber, caddyNotifierMetrics.eventRequested,
+		caddyNotifierMetrics.activeSubscription} {
 		if err := registry.Register(c); err != nil && !errors.Is(err, prometheus.AlreadyRegisteredError{
 			ExistingCollector: c,
 			NewCollector:      c,
@@ -98,9 +113,12 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 func updateMetrics(hub *messageHub, upstream string) {
 	caddyNotifierMetrics.eventSent.WithLabelValues(upstream).Add(float64(hub.eventSent))
 	hub.eventSent = 0
+	caddyNotifierMetrics.eventRequested.WithLabelValues(upstream).Add(float64(hub.eventRequested))
+	hub.eventRequested = 0
 	caddyNotifierMetrics.subscribeRequest.WithLabelValues(upstream).Add(float64(hub.subscribeRequested))
 	hub.subscribeRequested = 0
 	caddyNotifierMetrics.activeConnection.WithLabelValues(upstream).Set(float64(len(hub.websocketChannel)))
+	caddyNotifierMetrics.activeConnection.WithLabelValues(upstream).Set(float64(len(hub.subscriptions)))
 	caddyNotifierMetrics.channelCount.WithLabelValues(upstream).Set(float64(len(hub.channels)))
 	inbound := websocketInboundBytes.Swap(0)
 	caddyNotifierMetrics.websocketInboundBytes.WithLabelValues(upstream).Add(float64(inbound))

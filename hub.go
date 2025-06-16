@@ -43,6 +43,7 @@ type messageHub struct {
 	keepAlive time.Duration
 
 	// metrics
+	eventRequested     int64
 	eventSent          int64
 	subscribeRequested int64
 }
@@ -327,6 +328,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 		}:
 		default:
 		}
+		m.eventRequested++
 		m.eventSent += int64(len(websocketToNotify))
 
 	case "deauthorize":
