@@ -119,6 +119,18 @@ The caddy-notifier will request backend with credential to authenticate, whether
 
 The caddy-notifier will remove the subscriber from the channel subscription. If certain channel is not subscribed, it will be no-op. After unsubscribe, the subscriber will no longer receive message from that channel.
 
+##### resume
+
+```json
+{
+    "operation": "resume",
+    "resume_token": "resume_token",
+    "seq": 123
+}
+```
+
+If a connection disconnected from the notifier, and it tries to reconnect, the subscriber can send a `resume` request with a secret token to resume previous subscription.
+
 #### caddy-notifier to subscriber
 
 ##### subscribe results
@@ -127,9 +139,12 @@ The caddy-notifier will remove the subscriber from the channel subscription. If 
 {
     "operation": "verify",
     "accept": ["a list of channel_name"],
-    "reject": ["a list of channel_name"]
+    "reject": ["a list of channel_name"],
+    "resume_token": "resume_token"
 }
 ```
+
+When subscriber successfully subscribe / rejected for certain subscribe request, the list of accepted / rejected channel will be returned with a `resume_token` to resume previous subscription if disconnected.
 
 ##### unsubscribe results
 
@@ -150,11 +165,12 @@ De-authorized sent out `unsubscribed` events.
 {
     "operation": "event",
     "channels": ["a list of channel_name"],
-    "payload": { event content }
+    "seq": 123,
+    "payload": { "event content":  "can be any valid JSON structure" }
 }
 ```
 
-When a subscriber subscribes to multiple channel in the list, the event will be sent out once.
+When a subscriber subscribes to multiple channel in the list, the event will be sent out once. `seq` is the sequential increasing `id` to resume subscription and should be provided with `resume` request.
 
 #### caddy-notifier to backend
 

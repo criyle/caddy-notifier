@@ -2,23 +2,29 @@ package caddynotifier
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"runtime"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type messageHub struct {
-	// websocket -> set of channels
-	websocketChannel map[*subscriberWebSocket]map[string]struct{}
-	// channel -> set of websockets
-	channels map[string]map[*subscriberWebSocket]struct{}
-	// websocket id (remote addr) -> websocket
+	// websocket id -> websocket  (verify)
 	idMap map[string]*subscriberWebSocket
-	// websocket -> set of creds
-	websocketCred map[*subscriberWebSocket]map[string]struct{}
-	// creds -> set of (*websocket -> set of channel)
-	credMap map[string]map[*subscriberWebSocket]map[string]struct{}
+
+	// websocket -> subscription
+	websocketChannel map[*subscriberWebSocket]*subscription
+	// all subscription available: token -> subscription (resume)
+	subscriptions map[string]*subscription
+	// channel -> set of subscription (event)
+	channels map[string]map[*subscription]struct{}
+	// creds -> set of subscription (de-authorize)
+	credMap map[string]map[*subscription]struct{}
+
 	// upstreamChan
 	upstreamReqChan chan *NotifierRequest
 	// workerChan
@@ -34,9 +40,23 @@ type messageHub struct {
 	// category that exists
 	categorySet map[string]struct{}
 
+	keepAlive time.Duration
+
 	// metrics
 	eventSent          int64
 	subscribeRequested int64
+}
+
+type subscription struct {
+	token string
+	// current websocket connection, nil if disconnected
+	conn *subscriberWebSocket
+	// set of subscribed channels
+	channels map[string]struct{}
+	// cred -> set of channels
+	cred map[string]map[string]struct{}
+	// if disconnected, it records the last active time
+	lastActive time.Time
 }
 
 type workerRequest struct {
@@ -45,24 +65,37 @@ type workerRequest struct {
 	response   *SubscriberResponse
 }
 
-func newMessageHub(upstreamReqChan chan *NotifierRequest, metadata map[string]string, channelCategory []ChannelCategory) *messageHub {
+type messageHubConfig struct {
+	upstreamReqChan chan *NotifierRequest
+	metadata        map[string]string
+	channelCategory []ChannelCategory
+	keepAlive       time.Duration
+}
+
+const (
+	workerChanSize = 256
+	tokenLength    = 32 // 256 bits
+)
+
+func newMessageHub(conf messageHubConfig) *messageHub {
 	workerCount := 4
 	if cur := runtime.GOMAXPROCS(0); cur < workerCount {
 		workerCount = cur
 	}
 
 	hub := &messageHub{
-		websocketChannel:   make(map[*subscriberWebSocket]map[string]struct{}),
-		channels:           make(map[string]map[*subscriberWebSocket]struct{}),
+		websocketChannel:   make(map[*subscriberWebSocket]*subscription),
+		subscriptions:      make(map[string]*subscription),
+		channels:           make(map[string]map[*subscription]struct{}),
 		idMap:              make(map[string]*subscriberWebSocket),
-		websocketCred:      make(map[*subscriberWebSocket]map[string]struct{}),
-		credMap:            make(map[string]map[*subscriberWebSocket]map[string]struct{}),
-		upstreamReqChan:    upstreamReqChan,
-		workerChan:         make(chan *workerRequest, 256),
-		metadata:           metadata,
-		channelCategory:    channelCategory,
+		credMap:            make(map[string]map[*subscription]struct{}),
+		upstreamReqChan:    conf.upstreamReqChan,
+		workerChan:         make(chan *workerRequest, workerChanSize),
+		metadata:           conf.metadata,
+		channelCategory:    conf.channelCategory,
 		channelCategoryMap: make(map[string]string),
 		categorySet:        make(map[string]struct{}),
+		keepAlive:          conf.keepAlive,
 	}
 
 	for range workerCount {
@@ -132,21 +165,22 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 		m.subscribeRequested += int64(len(v.value.Channels))
 
 	case "unsubscribe":
-		if m.websocketChannel[v.conn] == nil {
+		sub, ok := m.websocketChannel[v.conn]
+		if !ok {
 			return
 		}
 		ch := make([]string, 0, len(v.value.Channels))
 		for _, c := range v.value.Channels {
-			if _, ok := m.websocketChannel[v.conn][c]; !ok {
+			if _, ok := sub.channels[c]; !ok {
 				continue
 			}
-			delete(m.channels[c], v.conn)
+			delete(m.channels[c], sub)
 			if len(m.channels[c]) == 0 {
 				delete(m.channels, c)
 				delete(m.channelCategoryMap, c)
 				ch = append(ch, c)
 			}
-			delete(m.websocketChannel[v.conn], c)
+			delete(sub.channels, c)
 		}
 		if len(ch) > 0 {
 			m.upstreamReqChan <- &NotifierRequest{
@@ -154,47 +188,80 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 				Channels:  ch,
 			}
 		}
+
+	case "resume":
+		sub, ok := m.subscriptions[v.value.ResumeToken]
+		if !ok {
+			return
+		}
+		sub.conn = v.conn
+		m.websocketChannel[v.conn] = sub
+
+		ch := make([]string, 0, len(sub.channels))
+		for c := range sub.channels {
+			ch = append(ch, c)
+		}
+		if len(sub.channels) > 0 {
+			select {
+			case m.workerChan <- &workerRequest{
+				websocket: v.conn,
+				response: &SubscriberResponse{
+					Operation: "verify",
+					Accept:    ch,
+				},
+			}:
+			default:
+			}
+		}
+		// TODO: send buffed messages
 	}
 }
 
 func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
-	ch := make([]string, 0, len(m.websocketChannel[w]))
-	for c := range m.websocketChannel[w] {
-		delete(m.channels[c], w)
-		if len(m.channels[c]) == 0 {
-			delete(m.channels, c)
-			delete(m.channelCategoryMap, c)
-			ch = append(ch, c)
-		}
-	}
-	for cred := range m.websocketCred[w] {
-		delete(m.credMap[cred], w)
-		if len(m.credMap[cred]) == 0 {
-			delete(m.credMap, cred)
-		}
-	}
-
+	sub := m.websocketChannel[w]
+	sub.conn = nil
+	sub.lastActive = time.Now()
 	delete(m.idMap, w.id)
 	delete(m.websocketChannel, w)
-	delete(m.websocketCred, w)
+}
 
-	if len(ch) > 0 {
-		m.upstreamReqChan <- &NotifierRequest{
-			Operation: "unsubscribe",
-			Channels:  ch,
-		}
+func (m *messageHub) newSubscription(conn *subscriberWebSocket) *subscription {
+	buf := make([]byte, tokenLength)
+	_, err := io.ReadFull(rand.Reader, buf)
+	if err != nil {
+		// TODO: grace handel
+		return nil
 	}
+	token := base64.URLEncoding.EncodeToString(buf)
+	sub := &subscription{
+		token:    token,
+		conn:     conn,
+		channels: make(map[string]struct{}),
+		cred:     make(map[string]map[string]struct{}),
+	}
+	m.subscriptions[token] = sub
+	return sub
 }
 
 func (m *messageHub) handleAccept(channels []string, credential string, w *subscriberWebSocket) {
+	if m.websocketChannel[w] == nil {
+		m.websocketChannel[w] = m.newSubscription(w)
+	}
+	sub := m.websocketChannel[w]
+	if sub.cred[credential] == nil {
+		sub.cred[credential] = make(map[string]struct{})
+	}
+	if m.credMap[credential] == nil {
+		m.credMap[credential] = map[*subscription]struct{}{}
+	}
+	m.credMap[credential][sub] = struct{}{}
+
 	for _, c := range channels {
-		if m.websocketChannel[w] == nil {
-			m.websocketChannel[w] = make(map[string]struct{})
-		}
-		m.websocketChannel[w][c] = struct{}{}
+		sub.channels[c] = struct{}{}
+		sub.cred[credential][c] = struct{}{}
 
 		if m.channels[c] == nil {
-			m.channels[c] = make(map[*subscriberWebSocket]struct{})
+			m.channels[c] = make(map[*subscription]struct{})
 			for _, cate := range m.channelCategory {
 				if cate.re.Match([]byte(c)) {
 					m.channelCategoryMap[c] = cate.Category
@@ -203,20 +270,7 @@ func (m *messageHub) handleAccept(channels []string, credential string, w *subsc
 				}
 			}
 		}
-		m.channels[c][w] = struct{}{}
-
-		if m.websocketCred[w] == nil {
-			m.websocketCred[w] = make(map[string]struct{})
-		}
-		m.websocketCred[w][credential] = struct{}{}
-
-		if m.credMap[credential] == nil {
-			m.credMap[credential] = make(map[*subscriberWebSocket]map[string]struct{})
-		}
-		if m.credMap[credential][w] == nil {
-			m.credMap[credential][w] = make(map[string]struct{})
-		}
-		m.credMap[credential][w][c] = struct{}{}
+		m.channels[c][sub] = struct{}{}
 	}
 }
 
@@ -252,8 +306,11 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 	case "event":
 		websocketToNotify := make(map[*subscriberWebSocket]struct{})
 		for _, c := range v.value.Channels {
-			for w := range m.channels[c] {
-				websocketToNotify[w] = struct{}{}
+			for sub := range m.channels[c] {
+				if sub.conn == nil {
+					continue
+				}
+				websocketToNotify[sub.conn] = struct{}{}
 			}
 		}
 		if len(websocketToNotify) == 0 {
@@ -273,37 +330,40 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 		m.eventSent += int64(len(websocketToNotify))
 
 	case "deauthorize":
-		ch := make([]string, 0)
-		for w, channels := range m.credMap[v.value.Credential] {
-			ch := make([]string, 0, len(channels))
-			for c := range channels {
+		unsubscribes := make([]string, 0)
+		for sub := range m.credMap[v.value.Credential] {
+			ch := make([]string, 0, len(sub.cred[v.value.Credential]))
+			for c := range sub.cred[v.value.Credential] {
 				ch = append(ch, c)
-				delete(m.channels[c], w)
+				delete(m.channels[c], sub)
 				if len(m.channels[c]) == 0 {
 					delete(m.channels, c)
 					delete(m.channelCategoryMap, c)
-					ch = append(ch, c)
+					unsubscribes = append(unsubscribes, c)
 				}
-				delete(m.websocketChannel[w], c)
+				delete(m.websocketChannel, sub.conn)
 			}
-			delete(m.websocketCred[w], v.value.Credential)
+			delete(sub.cred, v.value.Credential)
 
-			select {
-			case m.workerChan <- &workerRequest{
-				websocket: w,
-				response: &SubscriberResponse{
-					Operation: "unsubscribe",
-					Channels:  ch,
-				},
-			}:
-			default:
+			if sub.conn != nil {
+				select {
+				case m.workerChan <- &workerRequest{
+					websocket: sub.conn,
+					response: &SubscriberResponse{
+						Operation: "unsubscribe",
+						Channels:  ch,
+					},
+				}:
+				default:
+				}
 			}
 		}
+
 		delete(m.credMap, v.value.Credential)
-		if len(ch) > 0 {
+		if len(unsubscribes) > 0 {
 			m.upstreamReqChan <- &NotifierRequest{
 				Operation: "unsubscribe",
-				Channels:  ch,
+				Channels:  unsubscribes,
 			}
 		}
 	}
@@ -314,8 +374,46 @@ func (m *messageHub) handleUpstreamResume() {
 	for k := range m.channels {
 		ch = append(ch, k)
 	}
-	m.upstreamReqChan <- &NotifierRequest{
-		Operation: "resume",
-		Channels:  ch,
+	if len(ch) > 0 {
+		m.upstreamReqChan <- &NotifierRequest{
+			Operation: "resume",
+			Channels:  ch,
+		}
+	}
+}
+
+func (m *messageHub) pruneSubscription() {
+	for token, sub := range m.subscriptions {
+		if sub.conn != nil {
+			continue
+		}
+		if time.Since(sub.lastActive) < m.keepAlive {
+			continue
+		}
+
+		ch := make([]string, 0, len(sub.channels))
+		for c := range sub.channels {
+			delete(m.channels[c], sub)
+			if len(m.channels[c]) == 0 {
+				delete(m.channels, c)
+				delete(m.channelCategoryMap, c)
+				ch = append(ch, c)
+			}
+		}
+
+		if len(ch) > 0 {
+			m.upstreamReqChan <- &NotifierRequest{
+				Operation: "unsubscribe",
+				Channels:  ch,
+			}
+		}
+
+		for cred := range sub.cred {
+			delete(m.credMap[cred], sub)
+			if len(m.credMap[cred]) == 0 {
+				delete(m.credMap, cred)
+			}
+		}
+		delete(m.subscriptions, token)
 	}
 }

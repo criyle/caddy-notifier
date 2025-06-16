@@ -27,6 +27,7 @@ type upstream struct {
 	metadata    map[string]string
 
 	channelCategory []ChannelCategory
+	keepAlive       caddy.Duration
 
 	// upstreams
 	upstreamRespChan chan inboundMessage[NotifierResponse]
@@ -77,6 +78,7 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 	up.headers = m.Headers
 	up.metadata = m.Metadata
 	up.channelCategory = m.ChannelCategory
+	up.keepAlive = m.KeepAlive
 
 	if _, ok := upstreamMap[upstreamUrl]; !ok {
 		go up.upstreamMaintainer()
@@ -175,7 +177,12 @@ func (u *upstream) pumpMessage(w *upstreamWebSocket) {
 }
 
 func (u *upstream) messageProcessor() {
-	hub := newMessageHub(u.upstreamReqChan, u.metadata, u.channelCategory)
+	hub := newMessageHub(messageHubConfig{
+		upstreamReqChan: u.upstreamReqChan,
+		metadata:        u.metadata,
+		channelCategory: u.channelCategory,
+		keepAlive:       time.Duration(u.keepAlive),
+	})
 	defer hub.Close()
 
 	ticker := time.NewTicker(10 * time.Second)
@@ -196,6 +203,7 @@ func (u *upstream) messageProcessor() {
 			hub.handleUpstreamResume()
 
 		case <-ticker.C:
+			hub.pruneSubscription()
 			updateMetrics(hub, u.upstream)
 		}
 	}

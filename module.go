@@ -44,6 +44,7 @@ type WebSocketNotifier struct {
 	PingType         string            `json:"ping_type,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	ChannelCategory  []ChannelCategory `json:"channel_category,omitempty"`
+	KeepAlive        caddy.Duration    `json:"keep_alive,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -199,6 +200,7 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 //	  header_down [+|-]<field> [<value|regexp> [<replacement>]]
 //	  metadata				<key>	<replacement>
 //	  channel_category		<regexp>	category
+//	  keep_alive			<interval>
 //	}
 func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // consume directive name
@@ -397,6 +399,16 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			default:
 				return d.ArgErr()
 			}
+
+		case "keep_alive":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			dur, err := caddy.ParseDuration(d.Val())
+			if err != nil {
+				return d.Errf("bad duration value %s: %v", d.Val(), err)
+			}
+			m.KeepAlive = caddy.Duration(dur)
 
 		default:
 			return d.Errf("unrecognized subdirective %s", d.Val())

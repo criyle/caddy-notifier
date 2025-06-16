@@ -78,6 +78,9 @@ func ws(w http.ResponseWriter, r *http.Request) {
 			}
 		case "resume":
 			log.Println("resume", req.Channels)
+
+		case "unsubscribe":
+			log.Println("unsubscribe", req.Channels)
 		}
 		i++
 	}

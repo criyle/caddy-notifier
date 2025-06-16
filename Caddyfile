@@ -24,5 +24,7 @@
 
 		channel_category all all
 		channel_category ".*" other
+
+		keep_alive 10s # time duration for subscription to be resume
 	}
 }
