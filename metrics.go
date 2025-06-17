@@ -20,6 +20,8 @@ var caddyNotifierMetrics = struct {
 	websocketOutboundBytes   *prometheus.CounterVec
 	websocketCompressedBytes *prometheus.CounterVec
 	categorizedSubscriber    *prometheus.GaugeVec
+	workerThrottled          *prometheus.CounterVec
+	workerChannel            *prometheus.GaugeVec
 }{}
 
 func initCaddyNotifierMetrics(registry *prometheus.Registry) {
@@ -93,6 +95,18 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 			Name:      "subscriber_count",
 			Help:      "The number of subscriber of channels in each category",
 		}, []string{"upstream", "category"})
+		caddyNotifierMetrics.workerChannel = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "worker_channel",
+			Help:      "Number of messages to be sent in worker channel",
+		}, labels)
+		caddyNotifierMetrics.workerThrottled = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Subsystem: sub,
+			Name:      "worker_throttled_total",
+			Help:      "Number of messages throttled by worker channel due to high load",
+		}, labels)
 	})
 	for _, c := range []prometheus.Collector{
 		caddyNotifierMetrics.eventSent, caddyNotifierMetrics.subscribeRequest,
@@ -100,7 +114,8 @@ func initCaddyNotifierMetrics(registry *prometheus.Registry) {
 		caddyNotifierMetrics.upstreamStatus, caddyNotifierMetrics.websocketInboundBytes,
 		caddyNotifierMetrics.websocketOutboundBytes, caddyNotifierMetrics.websocketCompressedBytes,
 		caddyNotifierMetrics.categorizedSubscriber, caddyNotifierMetrics.eventRequested,
-		caddyNotifierMetrics.activeSubscription} {
+		caddyNotifierMetrics.activeSubscription, caddyNotifierMetrics.workerChannel,
+		caddyNotifierMetrics.workerThrottled} {
 		if err := registry.Register(c); err != nil && !errors.Is(err, prometheus.AlreadyRegisteredError{
 			ExistingCollector: c,
 			NewCollector:      c,
@@ -126,6 +141,9 @@ func updateMetrics(hub *messageHub, upstream string) {
 	caddyNotifierMetrics.websocketOutboundBytes.WithLabelValues(upstream).Add(float64(outbound))
 	compressed := websocketCompressedBytes.Swap(0)
 	caddyNotifierMetrics.websocketCompressedBytes.WithLabelValues(upstream).Add(float64(compressed))
+	caddyNotifierMetrics.workerChannel.WithLabelValues(upstream).Set(float64(len(hub.workerChan)))
+	caddyNotifierMetrics.workerThrottled.WithLabelValues(upstream).Add(float64(hub.workThrottled))
+	hub.workThrottled = 0
 	updateCategorySubscriber(hub, upstream)
 }
 

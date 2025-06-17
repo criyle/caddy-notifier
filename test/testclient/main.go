@@ -13,7 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func runClient() {
+func runClient(token string, seq uint64) {
 	h := make(http.Header)
 	h.Add("User-Agent", "testclient")
 	c, _, err := websocket.DefaultDialer.Dial("ws://localhost:6080/ws", h)
@@ -56,14 +56,17 @@ func runClient() {
 			}
 			switch resp.Operation {
 			case "verify":
-				log.Println("subscribe: ", resp.Accept)
+				log.Println("verify: ", resp.Accept, resp.ResumeToken)
+				token = resp.ResumeToken
+
 			case "event":
 				v := make(map[string]any)
 				err := json.NewDecoder(bytes.NewReader(resp.Payload)).Decode(&v)
 				if err != nil {
 					log.Println("json decode: ", err)
 				} else {
-					log.Println("event: ", v)
+					log.Println("event: ", resp.Seq, v)
+					seq = resp.Seq
 				}
 			}
 		}
@@ -77,10 +80,32 @@ func runClient() {
 		return
 	}
 
+	if token != "" {
+		req := &caddynotifier.SubscriberRequest{
+			Operation:   "resume",
+			ResumeToken: token,
+			Seq:         seq,
+		}
+		buf := new(bytes.Buffer)
+		if err := json.NewEncoder(buf).Encode(req); err != nil {
+			log.Println("json: ", err)
+			return
+		}
+		err := c.WriteMessage(websocket.BinaryMessage, sh.Deflate(buf.Bytes()))
+		if err != nil {
+			log.Println("write json: ", err)
+			return
+		}
+		log.Println("send: ", req)
+	}
+	i := 0
+
 	for {
 		select {
 		case <-done:
+			log.Println("close")
 			return
+
 		case t := <-ticker.C:
 			req := &caddynotifier.SubscriberRequest{
 				Operation:  "subscribe",
@@ -98,13 +123,18 @@ func runClient() {
 				return
 			}
 			log.Println("send: ", req)
+			i++
+			if i > 3 {
+				go runClient(token, seq)
+				return
+			}
 		}
 	}
 }
 
 func main() {
-	for range [10]struct{}{} {
-		go runClient()
+	for range [1]struct{}{} {
+		go runClient("", 0)
 	}
 	select {}
 }

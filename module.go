@@ -31,20 +31,21 @@ func init() {
 // controller service
 type WebSocketNotifier struct {
 	// Upstream address for the backend controller
-	Upstream         string            `json:"upstream,omitempty"`
-	WriteWait        caddy.Duration    `json:"write_wait,omitempty"`
-	PongWait         caddy.Duration    `json:"pong_wait,omitempty"`
-	PingInterval     caddy.Duration    `json:"ping_interval,omitempty"`
-	MaxMessageSize   int64             `json:"max_message_size,omitempty"`
-	ChanSize         int               `json:"chan_size,omitempty"`
-	RecoverWait      caddy.Duration    `json:"recover_wait,omitempty"`
-	Headers          *headers.Handler  `json:"headers,omitempty"`
-	Compression      string            `json:"compression,omitempty"`
-	ShortyResetCount int               `json:"shorty_reset_count,omitempty"`
-	PingType         string            `json:"ping_type,omitempty"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
-	ChannelCategory  []ChannelCategory `json:"channel_category,omitempty"`
-	KeepAlive        caddy.Duration    `json:"keep_alive,omitempty"`
+	Upstream           string            `json:"upstream,omitempty"`
+	WriteWait          caddy.Duration    `json:"write_wait,omitempty"`
+	PongWait           caddy.Duration    `json:"pong_wait,omitempty"`
+	PingInterval       caddy.Duration    `json:"ping_interval,omitempty"`
+	MaxMessageSize     int64             `json:"max_message_size,omitempty"`
+	ChanSize           int               `json:"chan_size,omitempty"`
+	RecoverWait        caddy.Duration    `json:"recover_wait,omitempty"`
+	Headers            *headers.Handler  `json:"headers,omitempty"`
+	Compression        string            `json:"compression,omitempty"`
+	ShortyResetCount   int               `json:"shorty_reset_count,omitempty"`
+	PingType           string            `json:"ping_type,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	ChannelCategory    []ChannelCategory `json:"channel_category,omitempty"`
+	KeepAlive          caddy.Duration    `json:"keep_alive,omitempty"`
+	MaxEventBufferSize int               `json:"max_event_buffer_size,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -409,6 +410,16 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Errf("bad duration value %s: %v", d.Val(), err)
 			}
 			m.KeepAlive = caddy.Duration(dur)
+
+		case "max_event_buffer_size":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			size, err := strconv.Atoi(d.Val())
+			if err != nil {
+				return d.Errf("bad size value %s: %v", d.Val(), err)
+			}
+			m.MaxEventBufferSize = size
 
 		default:
 			return d.Errf("unrecognized subdirective %s", d.Val())

@@ -17,12 +17,13 @@ type SubscriberRequest struct {
 
 // SubscriberResponse notifier -> subscriber
 type SubscriberResponse struct {
-	Operation string          `json:"operation"`
-	Channels  []string        `json:"channels,omitempty"`
-	Accept    []string        `json:"accept,omitempty"`
-	Reject    []string        `json:"reject,omitempty"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	Seq       uint64          `json:"seq,omitempty"`
+	Operation   string          `json:"operation"`
+	Channels    []string        `json:"channels,omitempty"`
+	Accept      []string        `json:"accept,omitempty"`
+	Reject      []string        `json:"reject,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	ResumeToken string          `json:"resume_token,omitempty"`
+	Seq         uint64          `json:"seq,omitempty"`
 }
 
 // NotifierRequest notifier -> backend

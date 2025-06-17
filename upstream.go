@@ -26,8 +26,9 @@ type upstream struct {
 	headers     *headers.Handler
 	metadata    map[string]string
 
-	channelCategory []ChannelCategory
-	keepAlive       caddy.Duration
+	channelCategory    []ChannelCategory
+	keepAlive          caddy.Duration
+	maxEventBufferSize int
 
 	// upstreams
 	upstreamRespChan chan inboundMessage[NotifierResponse]
@@ -79,6 +80,7 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 	up.metadata = m.Metadata
 	up.channelCategory = m.ChannelCategory
 	up.keepAlive = m.KeepAlive
+	up.maxEventBufferSize = m.MaxEventBufferSize
 
 	if _, ok := upstreamMap[upstreamUrl]; !ok {
 		go up.upstreamMaintainer()
@@ -178,10 +180,11 @@ func (u *upstream) pumpMessage(w *upstreamWebSocket) {
 
 func (u *upstream) messageProcessor() {
 	hub := newMessageHub(messageHubConfig{
-		upstreamReqChan: u.upstreamReqChan,
-		metadata:        u.metadata,
-		channelCategory: u.channelCategory,
-		keepAlive:       time.Duration(u.keepAlive),
+		upstreamReqChan:    u.upstreamReqChan,
+		metadata:           u.metadata,
+		channelCategory:    u.channelCategory,
+		keepAlive:          time.Duration(u.keepAlive),
+		maxEventBufferSize: u.maxEventBufferSize,
 	})
 	defer hub.Close()
 

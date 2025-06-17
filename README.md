@@ -41,6 +41,8 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
    9. outbound message size (`websocket_outbound_bytes_total`)
    10. outbound compressed message size (`websocket_outbound_compressed_bytes_total`)
    11. number of subscriber in channel per category (defined by `channel_category`) (`subscriber_count`)
+   12. current message in worker channel (`worker_channel`)
+   13. message throttled by worker channel (`worker_throttled_total`)
 
 ### Safety Considerations
 

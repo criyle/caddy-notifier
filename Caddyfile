@@ -26,5 +26,6 @@
 		channel_category ".*" other
 
 		keep_alive 10s # time duration for subscription to be resume
+		max_event_buffer_size 1024
 	}
 }

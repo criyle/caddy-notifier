@@ -40,12 +40,18 @@ type messageHub struct {
 	// category that exists
 	categorySet map[string]struct{}
 
-	keepAlive time.Duration
+	keepAlive          time.Duration
+	maxEventBufferSize int
 
 	// metrics
 	eventRequested     int64
 	eventSent          int64
 	subscribeRequested int64
+	workThrottled      int64
+
+	// message seq
+	seq         uint64
+	eventBuffer []buffedEvent
 }
 
 type subscription struct {
@@ -60,17 +66,25 @@ type subscription struct {
 	lastActive time.Time
 }
 
+type buffedEvent struct {
+	seq      uint64
+	channels []string
+	payload  json.RawMessage
+}
+
 type workerRequest struct {
 	websockets map[*subscriberWebSocket]struct{}
 	websocket  *subscriberWebSocket
 	response   *SubscriberResponse
+	responses  []*SubscriberResponse
 }
 
 type messageHubConfig struct {
-	upstreamReqChan chan *NotifierRequest
-	metadata        map[string]string
-	channelCategory []ChannelCategory
-	keepAlive       time.Duration
+	upstreamReqChan    chan *NotifierRequest
+	metadata           map[string]string
+	channelCategory    []ChannelCategory
+	keepAlive          time.Duration
+	maxEventBufferSize int
 }
 
 const (
@@ -97,6 +111,7 @@ func newMessageHub(conf messageHubConfig) *messageHub {
 		channelCategoryMap: make(map[string]string),
 		categorySet:        make(map[string]struct{}),
 		keepAlive:          conf.keepAlive,
+		maxEventBufferSize: conf.maxEventBufferSize,
 	}
 
 	for range workerCount {
@@ -110,27 +125,48 @@ func (m *messageHub) Close() {
 }
 
 func (m *messageHub) workerLoop() {
-	for v := range m.workerChan {
+	notify := func(msg *outboundMessage, w *subscriberWebSocket) {
+		select {
+		case <-w.done:
+		case w.outboundChan <- msg:
+		default:
+			m.workThrottled++
+		}
+	}
+	handle := func(response *SubscriberResponse, v *workerRequest) {
 		buf := new(bytes.Buffer)
-		_ = json.NewEncoder(buf).Encode(v.response)
+		_ = json.NewEncoder(buf).Encode(response)
 		msg := &outboundMessage{
 			messageType: websocket.TextMessage,
 			data:        buf.Bytes(),
 		}
 		if v.websocket != nil {
-			select {
-			case v.websocket.outboundChan <- msg:
-			default:
-			}
+			notify(msg, v.websocket)
 		}
 		if v.websockets != nil {
 			for w := range v.websockets {
-				select {
-				case w.outboundChan <- msg:
-				default:
-				}
+				notify(msg, w)
 			}
 		}
+	}
+
+	for v := range m.workerChan {
+		if v.response != nil {
+			handle(v.response, v)
+		}
+		if v.responses != nil {
+			for _, res := range v.responses {
+				handle(res, v)
+			}
+		}
+	}
+}
+
+func (m *messageHub) submitWork(work *workerRequest) {
+	select {
+	case m.workerChan <- work:
+	default:
+		m.workThrottled++
 	}
 }
 
@@ -195,6 +231,9 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 		if !ok {
 			return
 		}
+		if sub.conn != nil {
+			sub.conn.Close()
+		}
 		sub.conn = v.conn
 		m.websocketChannel[v.conn] = sub
 
@@ -203,25 +242,46 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 			ch = append(ch, c)
 		}
 		if len(sub.channels) > 0 {
-			select {
-			case m.workerChan <- &workerRequest{
+			m.submitWork(&workerRequest{
 				websocket: v.conn,
 				response: &SubscriberResponse{
 					Operation: "verify",
 					Accept:    ch,
 				},
-			}:
-			default:
+			})
+		}
+
+		responses := make([]*SubscriberResponse, 0)
+		for _, msg := range m.eventBuffer {
+			if msg.seq < v.value.Seq {
+				continue
+			}
+			for _, c := range msg.channels {
+				if _, ok := sub.channels[c]; ok {
+					responses = append(responses, &SubscriberResponse{
+						Operation: "event",
+						Channels:  msg.channels,
+						Payload:   msg.payload,
+						Seq:       uint64(m.seq),
+					})
+					break
+				}
 			}
 		}
-		// TODO: send buffed messages
+		if len(responses) > 0 {
+			m.submitWork(&workerRequest{
+				websocket: v.conn,
+				responses: responses,
+			})
+		}
 	}
 }
 
 func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
-	sub := m.websocketChannel[w]
-	sub.conn = nil
-	sub.lastActive = time.Now()
+	if sub, ok := m.websocketChannel[w]; ok {
+		sub.conn = nil
+		sub.lastActive = time.Now()
+	}
 	delete(m.idMap, w.id)
 	delete(m.websocketChannel, w)
 }
@@ -292,19 +352,27 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 		default:
 		}
 		m.handleAccept(v.value.Accept, v.value.Credential, w)
-		select {
-		case m.workerChan <- &workerRequest{
+		m.submitWork(&workerRequest{
 			websocket: w,
 			response: &SubscriberResponse{
-				Operation: "verify",
-				Accept:    v.value.Accept,
-				Reject:    v.value.Reject,
+				Operation:   "verify",
+				Accept:      v.value.Accept,
+				Reject:      v.value.Reject,
+				ResumeToken: m.websocketChannel[w].token,
 			},
-		}:
-		default:
-		}
+		})
 
 	case "event":
+		m.seq++
+		m.eventBuffer = append(m.eventBuffer, buffedEvent{
+			seq:      m.seq,
+			channels: v.value.Channels,
+			payload:  v.value.Payload,
+		})
+		if l := len(m.eventBuffer); l > m.maxEventBufferSize {
+			m.eventBuffer = m.eventBuffer[l-m.maxEventBufferSize:]
+		}
+
 		websocketToNotify := make(map[*subscriberWebSocket]struct{})
 		for _, c := range v.value.Channels {
 			for sub := range m.channels[c] {
@@ -317,17 +385,15 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 		if len(websocketToNotify) == 0 {
 			return
 		}
-		select {
-		case m.workerChan <- &workerRequest{
+		m.submitWork(&workerRequest{
 			websockets: websocketToNotify,
 			response: &SubscriberResponse{
 				Operation: "event",
 				Channels:  v.value.Channels,
 				Payload:   v.value.Payload,
+				Seq:       m.seq,
 			},
-		}:
-		default:
-		}
+		})
 		m.eventRequested++
 		m.eventSent += int64(len(websocketToNotify))
 
@@ -348,16 +414,13 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 			delete(sub.cred, v.value.Credential)
 
 			if sub.conn != nil {
-				select {
-				case m.workerChan <- &workerRequest{
+				m.submitWork(&workerRequest{
 					websocket: sub.conn,
 					response: &SubscriberResponse{
 						Operation: "unsubscribe",
 						Channels:  ch,
 					},
-				}:
-				default:
-				}
+				})
 			}
 		}
 
