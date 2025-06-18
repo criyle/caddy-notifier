@@ -155,6 +155,7 @@ If a connection disconnected from the notifier, and it tries to reconnect, the s
 ```json
 {
     "operation": "verify",
+    "request_id": "request id sent previously",
     "accept": ["a list of channel_name"],
     "reject": ["a list of channel_name"],
     "resume_token": "resume_token"
@@ -210,7 +211,7 @@ When a subscriber subscribes to multiple channel in the list, the event will be 
 
 ```json
 {
-    "connection_id": "identifier to distinct different connections",
+    "subscription_id": "identifier to distinct different connections",
     "request_id": "request id",
     "operation": "subscribe",
     "channels": ["a list of channel_name"],
@@ -225,7 +226,7 @@ When last subscriber of a list of subscriber desubscribed / deauthorized / disco
 
 ```json
 {
-    "connection_id": "identifier to distinct different connections",
+    "subscription_id": "identifier to distinct different connections",
     "channels": ["a list of channel_name"],
 }
 ```
@@ -247,9 +248,9 @@ The caddy-notifier sends `resume` with list of channels that have been subscribe
 
 ```json
 {
-    "connection_id": "identifier to distinct different connections",
+    "subscription_id": "identifier to distinct different connections",
+    "request_id": "identifier sent previously via request",
     "operation": "verify",
-    "credential": "credential for the accepted channel, must present if deauthorize requested", 
     "accept": ["a list of channel_name of accepted channels"],
     "reject": ["a list of channel_name of rejected channels"],
 }

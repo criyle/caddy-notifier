@@ -14,12 +14,9 @@ import (
 )
 
 type messageHub struct {
-	// websocket id -> websocket  (verify)
-	idMap map[string]*subscriberWebSocket
-
 	// websocket -> subscription
 	websocketChannel map[*subscriberWebSocket]*subscription
-	// all subscription available: token -> subscription (resume)
+	// all subscription available: token -> subscription (resume, verify)
 	subscriptions map[string]*subscription
 	// channel -> set of subscription (event)
 	channels map[string]map[*subscription]struct{}
@@ -107,7 +104,6 @@ func newMessageHub(conf messageHubConfig) *messageHub {
 		websocketChannel:   make(map[*subscriberWebSocket]*subscription),
 		subscriptions:      make(map[string]*subscription),
 		channels:           make(map[string]map[*subscription]struct{}),
-		idMap:              make(map[string]*subscriberWebSocket),
 		credMap:            make(map[string]map[*subscription]struct{}),
 		upstreamReqChan:    conf.upstreamReqChan,
 		workerChan:         make(chan *workerRequest, workerChanSize),
@@ -195,15 +191,18 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 				metadata[key] = v.conn.config.replacer.ReplaceKnown(value, "")
 			}
 		}
+		if m.websocketChannel[v.conn] == nil {
+			m.websocketChannel[v.conn] = m.newSubscription(v.conn)
+		}
+		sub := m.websocketChannel[v.conn]
 
-		m.idMap[v.conn.id] = v.conn
 		m.upstreamReqChan <- &NotifierRequest{
-			Operation:    "subscribe",
-			RequestId:    v.value.RequestId,
-			ConnectionId: v.conn.id,
-			Channels:     v.value.Channels,
-			Credential:   v.value.Credential,
-			Metadata:     metadata,
+			Operation:      "subscribe",
+			RequestId:      v.value.RequestId,
+			SubscriptionId: sub.token,
+			Channels:       v.value.Channels,
+			Credential:     v.value.Credential,
+			Metadata:       metadata,
 		}
 		m.subscribeRequested += int64(len(v.value.Channels))
 
@@ -297,7 +296,6 @@ func (m *messageHub) handleSubClose(w *subscriberWebSocket) {
 		sub.conn = nil
 		sub.lastActive = time.Now()
 	}
-	delete(m.idMap, w.id)
 	delete(m.websocketChannel, w)
 }
 
@@ -319,11 +317,7 @@ func (m *messageHub) newSubscription(conn *subscriberWebSocket) *subscription {
 	return sub
 }
 
-func (m *messageHub) handleAccept(channels []string, credential string, w *subscriberWebSocket) {
-	if m.websocketChannel[w] == nil {
-		m.websocketChannel[w] = m.newSubscription(w)
-	}
-	sub := m.websocketChannel[w]
+func (m *messageHub) handleAccept(channels []string, credential string, sub *subscription) {
 	if sub.cred[credential] == nil {
 		sub.cred[credential] = make(map[string]struct{})
 	}
@@ -356,25 +350,22 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 	}
 	switch v.value.Operation {
 	case "verify":
-		w, ok := m.idMap[v.value.ConnectionId]
+		sub, ok := m.subscriptions[v.value.SubscriptionId]
 		if !ok {
 			return
 		}
-		select {
-		case <-w.done:
-			m.handleSubClose(w)
+		m.handleAccept(v.value.Accept, v.value.Credential, sub)
+		if sub.conn == nil {
 			return
-		default:
 		}
-		m.handleAccept(v.value.Accept, v.value.Credential, w)
 		m.submitWork(&workerRequest{
-			websocket: w,
+			websocket: sub.conn,
 			response: &SubscriberResponse{
 				Operation:   "verify",
 				RequestId:   v.value.RequestId,
 				Accept:      v.value.Accept,
 				Reject:      v.value.Reject,
-				ResumeToken: m.websocketChannel[w].token,
+				ResumeToken: sub.token,
 			},
 		})
 
@@ -420,6 +411,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 			for c := range sub.cred[v.value.Credential] {
 				ch = append(ch, c)
 				delete(m.channels[c], sub)
+				delete(sub.channels, c)
 				if len(m.channels[c]) == 0 {
 					delete(m.channels, c)
 					delete(m.channelCategoryMap, c)

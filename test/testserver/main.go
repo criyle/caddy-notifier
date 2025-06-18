@@ -33,21 +33,21 @@ func ws(w http.ResponseWriter, r *http.Request) {
 		switch req.Operation {
 		case "subscribe":
 			res := &caddynotifier.NotifierResponse{
-				Operation:    "verify",
-				ConnectionId: req.ConnectionId,
-				Credential:   req.Credential,
-				Accept:       req.Channels,
+				Operation:      "verify",
+				SubscriptionId: req.SubscriptionId,
+				Credential:     req.Credential,
+				Accept:         req.Channels,
 			}
 			err := c.WriteJSON(res)
 			if err != nil {
 				log.Println("writejson: ", err)
 				return
 			}
-			log.Println("subscribe: ", req.ConnectionId, req.Metadata)
+			log.Println("subscribe: ", req.SubscriptionId, req.Metadata)
 
 			var buf bytes.Buffer
 			err = json.NewEncoder(&buf).Encode(map[string]any{
-				"connection_id": res.ConnectionId,
+				"connection_id": res.SubscriptionId,
 			})
 			if err != nil {
 				log.Println("json encoder: ", err)

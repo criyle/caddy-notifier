@@ -29,22 +29,22 @@ type SubscriberResponse struct {
 
 // NotifierRequest notifier -> backend
 type NotifierRequest struct {
-	Operation    string            `json:"operation"`
-	ConnectionId string            `json:"connection_id,omitempty"`
-	RequestId    string            `json:"request_id,omitempty"`
-	Channels     []string          `json:"channels,omitempty"`
-	Credential   string            `json:"credential,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	Operation      string            `json:"operation"`
+	SubscriptionId string            `json:"subscription_id,omitempty"`
+	RequestId      string            `json:"request_id,omitempty"`
+	Channels       []string          `json:"channels,omitempty"`
+	Credential     string            `json:"credential,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
 // NotifierResponse backend -> notifier
 type NotifierResponse struct {
-	Operation    string          `json:"operation"`
-	ConnectionId string          `json:"connection_id,omitempty"`
-	RequestId    string          `json:"request_id,omitempty"`
-	Channels     []string        `json:"channels,omitempty"`
-	Accept       []string        `json:"accept,omitempty"`
-	Reject       []string        `json:"reject,omitempty"`
-	Payload      json.RawMessage `json:"payload,omitempty"`
-	Credential   string          `json:"credential,omitempty"`
+	Operation      string          `json:"operation"`
+	SubscriptionId string          `json:"subscription_id,omitempty"`
+	RequestId      string          `json:"request_id,omitempty"`
+	Channels       []string        `json:"channels,omitempty"`
+	Accept         []string        `json:"accept,omitempty"`
+	Reject         []string        `json:"reject,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Credential     string          `json:"credential,omitempty"`
 }
