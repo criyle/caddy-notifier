@@ -18,6 +18,7 @@ type SubscriberRequest struct {
 // SubscriberResponse notifier -> subscriber
 type SubscriberResponse struct {
 	Operation   string          `json:"operation"`
+	RequestId   string          `json:"request_id,omitempty"`
 	Channels    []string        `json:"channels,omitempty"`
 	Accept      []string        `json:"accept,omitempty"`
 	Reject      []string        `json:"reject,omitempty"`
@@ -40,6 +41,7 @@ type NotifierRequest struct {
 type NotifierResponse struct {
 	Operation    string          `json:"operation"`
 	ConnectionId string          `json:"connection_id,omitempty"`
+	RequestId    string          `json:"request_id,omitempty"`
 	Channels     []string        `json:"channels,omitempty"`
 	Accept       []string        `json:"accept,omitempty"`
 	Reject       []string        `json:"reject,omitempty"`

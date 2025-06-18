@@ -371,6 +371,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 			websocket: w,
 			response: &SubscriberResponse{
 				Operation:   "verify",
+				RequestId:   v.value.RequestId,
 				Accept:      v.value.Accept,
 				Reject:      v.value.Reject,
 				ResumeToken: m.websocketChannel[w].token,
