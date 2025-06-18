@@ -73,7 +73,7 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 		repl = caddy.NewReplacer()
 	}
 	up.replacer = repl
-	up.logger = m.logger
+	up.logger = m.logger.Named("upstream")
 	up.websocketConfig = m.websocketConfig
 	up.recoverWait = m.RecoverWait
 	up.headers = m.Headers
@@ -106,6 +106,7 @@ func removeUpstream(upstreamUrl string) {
 }
 
 func (u *upstream) upstreamMaintainer() {
+	logger := u.logger.Named("maintainer")
 	recoverWait := time.Duration(u.recoverWait)
 	if recoverWait == 0 {
 		recoverWait = defaultRecoverWait
@@ -120,13 +121,13 @@ func (u *upstream) upstreamMaintainer() {
 		w, err := u.dialUpstream()
 		if err != nil {
 			caddyNotifierMetrics.upstreamStatus.WithLabelValues(u.upstream).Set(0.0)
-			if c := u.logger.Check(zap.InfoLevel, "connect to upstream failed"); c != nil {
+			if c := logger.Check(zap.InfoLevel, "connect to upstream failed"); c != nil {
 				c.Write(zap.String("upstream", u.upstream), zap.Error(err))
 			}
 		} else {
 			caddyNotifierMetrics.upstreamStatus.WithLabelValues(u.upstream).Set(1.0)
-			u.pumpMessage(w)
-			if c := u.logger.Check(zap.InfoLevel, "upstream disconnected"); c != nil {
+			u.pumpMessage(w, logger)
+			if c := logger.Check(zap.InfoLevel, "upstream disconnected"); c != nil {
 				c.Write(zap.String("upstream", u.upstream), zap.Error(w.err))
 			}
 		}
@@ -154,10 +155,12 @@ func (u *upstream) dialUpstream() (*upstreamWebSocket, error) {
 	config.shorty = false
 	config.metrics = false
 	config.pingText = false
-	return newWebSocket(conn, u.upstreamRespChan, &config, u.replacer), nil
+	config.replacer = u.replacer
+	config.logger = u.logger.Named("conn")
+	return newWebSocket(conn, u.upstreamRespChan, config), nil
 }
 
-func (u *upstream) pumpMessage(w *upstreamWebSocket) {
+func (u *upstream) pumpMessage(w *upstreamWebSocket, logger *zap.Logger) {
 	defer w.Close()
 	u.upstreamResume <- struct{}{}
 	for {
@@ -174,17 +177,22 @@ func (u *upstream) pumpMessage(w *upstreamWebSocket) {
 				return
 			}
 			w.outboundChan <- &outboundMessage{messageType: websocket.TextMessage, data: buf.Bytes()}
+			if c := logger.Check(zap.DebugLevel, "notifier -> upstream"); c != nil {
+				c.Write(zap.Any("request", v))
+			}
 		}
 	}
 }
 
 func (u *upstream) messageProcessor() {
+	logger := u.logger.Named("hub")
 	hub := newMessageHub(messageHubConfig{
 		upstreamReqChan:    u.upstreamReqChan,
 		metadata:           u.metadata,
 		channelCategory:    u.channelCategory,
 		keepAlive:          time.Duration(u.keepAlive),
 		maxEventBufferSize: u.maxEventBufferSize,
+		logger:             logger,
 	})
 	defer hub.Close()
 
@@ -194,12 +202,16 @@ func (u *upstream) messageProcessor() {
 	for {
 		select {
 		case <-u.ctx.Done():
+			logger.Debug("upstream message processor done")
 			return
 
 		case v := <-u.subscriberReqChan:
 			hub.handleSubReq(v)
 
 		case v := <-u.upstreamRespChan:
+			if c := logger.Check(zap.DebugLevel, "upstream -> notifier"); c != nil {
+				c.Write(zap.Any("response", v.value))
+			}
 			hub.handleUpstreamResp(v)
 
 		case <-u.upstreamResume:

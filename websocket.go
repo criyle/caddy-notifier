@@ -9,6 +9,7 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/criyle/caddy-notifier/shorty"
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 var (
@@ -20,8 +21,7 @@ var (
 type webSocket[T any] struct {
 	conn         *websocket.Conn
 	outboundChan chan<- *outboundMessage
-	config       *websocketConfig
-	replacer     *caddy.Replacer
+	config       websocketConfig
 	err          error
 	done         <-chan struct{}
 	id           string
@@ -43,6 +43,8 @@ type outboundMessage struct {
 }
 
 type websocketConfig struct {
+	logger           *zap.Logger
+	replacer         *caddy.Replacer
 	writeWait        time.Duration
 	pongWait         time.Duration
 	pingInterval     time.Duration // must less than pongWait
@@ -54,7 +56,7 @@ type websocketConfig struct {
 	pingText         bool
 }
 
-func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage[T], conf *websocketConfig, repl *caddy.Replacer) *webSocket[T] {
+func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage[T], conf websocketConfig) *webSocket[T] {
 	outC := make(chan *outboundMessage, conf.chanSize)
 	done := make(chan struct{})
 	w := &webSocket[T]{
@@ -63,7 +65,6 @@ func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage
 		config:       conf,
 		done:         done,
 		id:           conn.RemoteAddr().String(),
-		replacer:     repl,
 	}
 	go w.readLoop(done, inboundChan)
 	go w.writeLoop(done, outC)
@@ -95,11 +96,15 @@ func (w *webSocket[T]) readLoop(done chan struct{}, inboundChan chan<- inboundMe
 		_, data, err := w.conn.ReadMessage()
 		if err != nil {
 			w.err = err
+			if c := w.config.logger.Check(zap.DebugLevel, "ws read error"); c != nil {
+				c.Write(zap.Error(err))
+			}
 			return
 		}
 		if w.config.metrics {
 			websocketInboundBytes.Add(int64(len(data)))
 		}
+		w.conn.SetReadDeadline(time.Now().Add(w.config.pongWait))
 		// ignore ping
 		if bytes.Equal(data, []byte("ping")) {
 			w.conn.WriteMessage(websocket.TextMessage, []byte("pong"))
@@ -107,7 +112,6 @@ func (w *webSocket[T]) readLoop(done chan struct{}, inboundChan chan<- inboundMe
 		}
 		// update deadline with pong
 		if bytes.Equal(data, []byte("pong")) {
-			w.conn.SetReadDeadline(time.Now().Add(w.config.pongWait))
 			continue
 		}
 		// support shorty
@@ -125,6 +129,9 @@ func (w *webSocket[T]) readLoop(done chan struct{}, inboundChan chan<- inboundMe
 		v := new(T)
 		if err := json.NewDecoder(bytes.NewBuffer(data)).Decode(v); err != nil {
 			w.err = err
+			if c := w.config.logger.Check(zap.DebugLevel, "ws read json"); c != nil {
+				c.Write(zap.Error(err))
+			}
 			return
 		}
 		inboundChan <- inboundMessage[T]{
@@ -160,6 +167,7 @@ func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outbound
 		case v, ok := <-outboundChan:
 			w.conn.SetWriteDeadline(time.Now().Add(w.config.writeWait))
 			if !ok {
+				w.config.logger.Debug("ws outbound close")
 				w.conn.WriteMessage(websocket.CloseMessage, nil)
 				return
 			}
@@ -174,6 +182,9 @@ func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outbound
 				if sh != nil {
 					if w.config.shortyResetCount > 0 && count > w.config.shortyResetCount {
 						if err := resetShorty(); err != nil {
+							if c := w.config.logger.Check(zap.DebugLevel, "ws reset shorty"); c != nil {
+								c.Write(zap.Error(err))
+							}
 							return
 						}
 					}
@@ -185,6 +196,9 @@ func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outbound
 					}
 				}
 				if err := w.conn.WriteMessage(t, data); err != nil {
+					if c := w.config.logger.Check(zap.DebugLevel, "ws write message"); c != nil {
+						c.Write(zap.Error(err))
+					}
 					return
 				}
 			}
@@ -192,10 +206,16 @@ func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outbound
 		case <-ticker.C:
 			w.conn.SetWriteDeadline(time.Now().Add(w.config.writeWait))
 			if err := w.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				if c := w.config.logger.Check(zap.DebugLevel, "ws ping error"); c != nil {
+					c.Write(zap.Error(err))
+				}
 				return
 			}
 			if w.config.pingText {
 				if err := w.conn.WriteMessage(websocket.TextMessage, []byte("ping")); err != nil {
+					if c := w.config.logger.Check(zap.DebugLevel, "ws text ping error"); c != nil {
+						c.Write(zap.Error(err))
+					}
 					return
 				}
 			}

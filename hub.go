@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 type messageHub struct {
@@ -52,6 +53,9 @@ type messageHub struct {
 	// message seq
 	seq         uint64
 	eventBuffer []buffedEvent
+
+	// logger
+	logger *zap.Logger
 }
 
 type subscription struct {
@@ -80,6 +84,7 @@ type workerRequest struct {
 }
 
 type messageHubConfig struct {
+	logger             *zap.Logger
 	upstreamReqChan    chan *NotifierRequest
 	metadata           map[string]string
 	channelCategory    []ChannelCategory
@@ -112,6 +117,7 @@ func newMessageHub(conf messageHubConfig) *messageHub {
 		categorySet:        make(map[string]struct{}),
 		keepAlive:          conf.keepAlive,
 		maxEventBufferSize: conf.maxEventBufferSize,
+		logger:             conf.logger,
 	}
 
 	for range workerCount {
@@ -186,7 +192,7 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 		if m.metadata != nil {
 			metadata = map[string]string{}
 			for key, value := range m.metadata {
-				metadata[key] = v.conn.replacer.ReplaceKnown(value, "")
+				metadata[key] = v.conn.config.replacer.ReplaceKnown(value, "")
 			}
 		}
 
@@ -229,6 +235,12 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 	case "resume":
 		sub, ok := m.subscriptions[v.value.ResumeToken]
 		if !ok {
+			m.submitWork(&workerRequest{
+				websocket: v.conn,
+				response: &SubscriberResponse{
+					Operation: "resume_failed",
+				},
+			})
 			return
 		}
 		if sub.conn != nil {
@@ -245,10 +257,13 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 			m.submitWork(&workerRequest{
 				websocket: v.conn,
 				response: &SubscriberResponse{
-					Operation: "verify",
-					Accept:    ch,
+					Operation: "resume_success",
+					Channels:  ch,
 				},
 			})
+		}
+		if v.value.Seq == 0 {
+			return
 		}
 
 		responses := make([]*SubscriberResponse, 0)
@@ -290,7 +305,7 @@ func (m *messageHub) newSubscription(conn *subscriberWebSocket) *subscription {
 	buf := make([]byte, tokenLength)
 	_, err := io.ReadFull(rand.Reader, buf)
 	if err != nil {
-		// TODO: grace handel
+		m.logger.Warn("new subscription failed", zap.Error(err))
 		return nil
 	}
 	token := base64.URLEncoding.EncodeToString(buf)

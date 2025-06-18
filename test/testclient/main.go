@@ -16,7 +16,7 @@ import (
 func runClient(token string, seq uint64) {
 	h := make(http.Header)
 	h.Add("User-Agent", "testclient")
-	c, _, err := websocket.DefaultDialer.Dial("ws://localhost:6080/ws", h)
+	c, _, err := websocket.DefaultDialer.Dial("ws://localhost:6080/ws?shorty=on", h)
 	if err != nil {
 		log.Println("dial: ", err)
 		return
@@ -37,6 +37,7 @@ func runClient(token string, seq uint64) {
 				return
 			}
 			if bytes.Equal(data, []byte("shorty")) {
+				log.Println("shorty")
 				if rsh == nil {
 					rsh = shorty.NewShorty(10)
 				} else {
@@ -58,6 +59,9 @@ func runClient(token string, seq uint64) {
 			case "verify":
 				log.Println("verify: ", resp.Accept, resp.ResumeToken)
 				token = resp.ResumeToken
+
+			case "resume_success":
+				log.Println("resume_success: ", resp.Channels)
 
 			case "event":
 				v := make(map[string]any)

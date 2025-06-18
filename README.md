@@ -61,6 +61,10 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 ```caddyfile
 {
     metrics
+    log notifier {
+        level DEBUG
+        include http.handlers.websocket_notifier
+    }
 }
 
 :6080 {
@@ -84,6 +88,15 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
     }
 }
 ```
+
+Debug Log Hierarchy:
+
+- http.handlers.websocket_notifier
+  - subscriber.{remote_addr}:{remote_port}
+  - upstream
+    - maintainer
+    - conn
+    - hub
 
 ## TODO
 
@@ -149,6 +162,21 @@ If a connection disconnected from the notifier, and it tries to reconnect, the s
 ```
 
 When subscriber successfully subscribe / rejected for certain subscribe request, the list of accepted / rejected channel will be returned with a `resume_token` to resume previous subscription if disconnected.
+
+##### resume results
+
+```json
+{
+    "operation": "resume_success",
+    "channel": ["a list of channels in previous subscription"]
+}
+```
+
+```json
+{
+    "operation": "resume_failed"
+}
+```
 
 ##### unsubscribe results
 

@@ -177,9 +177,27 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 		return err
 	}
 
+	// if search parameter have shorty=on, turn on shorty on this connection
+	config := *m.websocketConfig
+	config.logger = m.logger.Named("subscriber." + conn.RemoteAddr().String())
+	config.shorty = len(r.URL.Query().Get("shorty")) > 0
+	config.replacer = repl
+
+	if c := config.logger.Check(zap.DebugLevel, "new subscriber connected"); c != nil {
+		c.Write(
+			zap.Duration("write_wait", config.writeWait),
+			zap.Duration("pong_wait", config.pongWait),
+			zap.Duration("ping_interval", config.pingInterval),
+			zap.Int64("max_message_size", config.maxMessageSize),
+			zap.Int("chan_size", config.chanSize),
+			zap.Bool("shorty", config.shorty),
+			zap.Bool("ping_text", config.pingText),
+		)
+	}
+
 	// it will start read / write loop internally, and the message processor
 	// take care of the messages, so no need to maintain any state
-	_ = newWebSocket(conn, m.upstream.subscriberReqChan, m.websocketConfig, repl)
+	_ = newWebSocket(conn, m.upstream.subscriberReqChan, config)
 	return nil
 }
 

@@ -1,5 +1,9 @@
 {
 	metrics
+	log notifier {
+		level DEBUG
+		include http.handlers.websocket_notifier
+	}
 }
 
 :6080 :6040 {
