@@ -45,6 +45,7 @@ type upstream struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	count  atomic.Int32
+	update atomic.Bool
 }
 
 var (
@@ -94,6 +95,7 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 	}
 
 	up.count.Add(1)
+	up.update.Store(true)
 	return up
 }
 
@@ -237,6 +239,25 @@ func (u *upstream) messageProcessor() {
 			updateMetrics(hub, u.upstream)
 			if u.subscribeTryInterval <= 0 {
 				hub.retrySubscribeRequests()
+			}
+			if u.update.CompareAndSwap(true, false) {
+				if c := logger.Check(zap.DebugLevel, "hub configuration updated"); c != nil {
+					c.Write(
+						zap.Any("metadata", u.metadata),
+						zap.Any("channel_category", u.channelCategory),
+						zap.Duration("keep_alive", time.Duration(u.keepAlive)),
+						zap.Int("max_event_buffer_size", u.maxEventBufferSize),
+						zap.Int("retries", u.subscribeRetries),
+					)
+				}
+				hub.updateConfig(&messageHubConfig{
+					logger:             u.logger,
+					metadata:           u.metadata,
+					channelCategory:    u.channelCategory,
+					keepAlive:          time.Duration(u.keepAlive),
+					maxEventBufferSize: u.maxEventBufferSize,
+					retries:            u.subscribeRetries,
+				})
 			}
 
 		case <-retryChan:

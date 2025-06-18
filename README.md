@@ -27,9 +27,8 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 
 ### Considerations
 
-1. When subscriber disconnected from the notifier, it needs to re-subscribe all channels needed, to eliminate requirement of session storage (eliminate stateful session)
-2. For subscriber (? maybe certain optional parameter `after` can be added to receive buffered message. How it defines? If timestamped, we need to ensure time sync, If message id, we need to ensure it incremental correctly. Or we just send all buffered message and let subscriber deduplicate)
-3. Metrics (prefix `caddy_websocket_notifier_*`)
+1. When subscriber disconnected from the notifier, it has a `resume_token` (`subscription_id`) to allow it re-connect to a subscription within `keep_alive` period. The resumed subscriber is able to receive buffered message during the reconnection with `seq` indication.
+2. Metrics (prefix `caddy_websocket_notifier_*`)
    1. Number of event sent (`event_sent_total`)
    2. Number of event requested (`event_requested_total`)
    3. number of subscribe event (`subscribe_requested_total`)
@@ -46,11 +45,10 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 
 ### Safety Considerations
 
-1. Although `de-authorize` provided method to ensure no left-over subscriptions, token that expires by time may need extra watch dog (? or provide `valid_until` field in authenticator response)
-2. Maybe need to limit the number of channel single connection can connect to
-3. Do we allow multiple connection to use the same credential? (maybe from different page, or consolidate via web worker)
-4. Do we want to limit the rate of sending out events? Due to event fan-out nature, there must be write-amplification effect. In this case, do we consider certain event have higher priority or certain event could be dropped when rate limited.
-5. Do we want to limit the subscribe rate for single connection?
+1. Maybe need to limit the number of channel single connection can connect to
+2. Do we want to limit the rate of sending out events? Due to event fan-out nature, there must be write-amplification effect. In this case, do we consider certain event have higher priority or certain event could be dropped when rate limited.
+3. Do we want to limit the subscribe rate for single connection?
+4. Do we want to limit the number of `subscribe` a connection could sent?
 
 ### Packages
 
@@ -74,7 +72,7 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
         ping_interval 50s
         max_message_size 256k # max incoming message size from subscriber
         chan_size 16
-        recovery_wait 5s
+        recovery_wait 5s # how long should upstream maintainer try to reconnect if connection dropped
 
         header_up +TEST_HEADER "value"
         header_down -TEST_HEADER "value"
@@ -95,16 +93,12 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 }
 ```
 
-Because of the deduplication, some of the value will not update until full reload:
+Because of the deduplication, some of the value will not fully update until a full restart:
 
-- `metadata`
-- `channel_category`
-- `keep_alive`
-- `max_event_buffer_size`
-- `subscribe_retries`
-- `subscribe_try_interval`
-
-Other values will not be updated until reconnection of the websocket.
+- `channel_category`: previous categorized channel will be cached
+- `subscribe_try_interval`: ticker interval will not be changed or enabled
+- `chan_size`: channel will not be recreated with new size
+- WebSocket related values will not be updated until disconnect and reconnection
 
 If the retry is not enabled, the unresponsive requests will be removed after ~20s to avoid memory leak.
 
@@ -121,8 +115,9 @@ Debug Log Hierarchy:
 
 - [x] De-authorize
 - [x] Metrics
-- [ ] Rate limit (?)
-- [ ] Message Buffer
+- [x] Message Buffer
+- [ ] Rate / resource limit (?)
+
 
 ### Protocol
 

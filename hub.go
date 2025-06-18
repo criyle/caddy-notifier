@@ -564,3 +564,12 @@ func (m *messageHub) pruneSubscription() {
 		delete(m.subscriptions, token)
 	}
 }
+
+func (m *messageHub) updateConfig(conf *messageHubConfig) {
+	m.logger = conf.logger
+	m.metadata = conf.metadata
+	m.channelCategory = conf.channelCategory
+	m.keepAlive = conf.keepAlive
+	m.maxEventBufferSize = conf.maxEventBufferSize
+	m.retries = conf.retries
+}
