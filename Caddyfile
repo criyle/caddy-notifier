@@ -31,5 +31,8 @@
 
 		keep_alive 10s # time duration for subscription to be resume
 		max_event_buffer_size 1024
+
+		subscribe_retries 3 # request will retry maximum 3 times for every 2 second
+		subscribe_try_interval 2s
 	}
 }

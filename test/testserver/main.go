@@ -35,7 +35,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 			res := &caddynotifier.NotifierResponse{
 				Operation:      "verify",
 				SubscriptionId: req.SubscriptionId,
-				Credential:     req.Credential,
+				RequestId:      req.RequestId,
 				Accept:         req.Channels,
 			}
 			err := c.WriteJSON(res)
@@ -47,7 +47,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 
 			var buf bytes.Buffer
 			err = json.NewEncoder(&buf).Encode(map[string]any{
-				"connection_id": res.SubscriptionId,
+				"subscription_id": req.SubscriptionId,
 			})
 			if err != nil {
 				log.Println("json encoder: ", err)
@@ -65,7 +65,7 @@ func ws(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if i%50 == 0 {
-				res = &caddynotifier.NotifierResponse{
+				res := &caddynotifier.NotifierResponse{
 					Operation:  "deauthorize",
 					Credential: req.Credential,
 				}

@@ -51,6 +51,10 @@ type messageHub struct {
 	seq         uint64
 	eventBuffer []buffedEvent
 
+	// track current requests
+	subscribeRequest map[subscribeRequestKey]*subscribeRequestValue
+	retries          int
+
 	// logger
 	logger *zap.Logger
 }
@@ -87,6 +91,19 @@ type messageHubConfig struct {
 	channelCategory    []ChannelCategory
 	keepAlive          time.Duration
 	maxEventBufferSize int
+	retries            int
+}
+
+type subscribeRequestKey struct {
+	subscriptionId string
+	requestId      string
+}
+
+type subscribeRequestValue struct {
+	channels   []string
+	credential string
+	metadata   map[string]string
+	try        int
 }
 
 const (
@@ -113,6 +130,8 @@ func newMessageHub(conf messageHubConfig) *messageHub {
 		categorySet:        make(map[string]struct{}),
 		keepAlive:          conf.keepAlive,
 		maxEventBufferSize: conf.maxEventBufferSize,
+		subscribeRequest:   make(map[subscribeRequestKey]*subscribeRequestValue),
+		retries:            conf.retries,
 		logger:             conf.logger,
 	}
 
@@ -195,7 +214,22 @@ func (m *messageHub) handleSubReq(v inboundMessage[SubscriberRequest]) {
 			m.websocketChannel[v.conn] = m.newSubscription(v.conn)
 		}
 		sub := m.websocketChannel[v.conn]
-
+		key := subscribeRequestKey{sub.token, v.value.RequestId}
+		if _, ok := m.subscribeRequest[key]; ok {
+			if c := m.logger.Check(zap.DebugLevel, "request exists"); c != nil {
+				c.Write(
+					zap.String("token", sub.token),
+					zap.String("request_id", v.value.RequestId),
+					zap.String("conn_id", v.conn.id),
+				)
+			}
+			return
+		}
+		m.subscribeRequest[key] = &subscribeRequestValue{
+			channels:   v.value.Channels,
+			credential: v.value.Credential,
+			metadata:   metadata,
+		}
 		m.upstreamReqChan <- &NotifierRequest{
 			Operation:      "subscribe",
 			RequestId:      v.value.RequestId,
@@ -350,11 +384,24 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 	}
 	switch v.value.Operation {
 	case "verify":
+		key := subscribeRequestKey{v.value.SubscriptionId, v.value.RequestId}
+		req, ok := m.subscribeRequest[key]
+		if !ok {
+			if c := m.logger.Check(zap.DebugLevel, "verify request not exists"); c != nil {
+				c.Write(
+					zap.String("subscription_id", v.value.SubscriptionId),
+					zap.String("request_id", v.value.RequestId),
+				)
+			}
+			return
+		}
+		delete(m.subscribeRequest, key)
+
 		sub, ok := m.subscriptions[v.value.SubscriptionId]
 		if !ok {
 			return
 		}
-		m.handleAccept(v.value.Accept, v.value.Credential, sub)
+		m.handleAccept(v.value.Accept, req.credential, sub)
 		if sub.conn == nil {
 			return
 		}
@@ -451,6 +498,33 @@ func (m *messageHub) handleUpstreamResume() {
 		m.upstreamReqChan <- &NotifierRequest{
 			Operation: "resume",
 			Channels:  ch,
+		}
+	}
+}
+
+func (m *messageHub) retrySubscribeRequests() {
+	for k, v := range m.subscribeRequest {
+		v.try += 1
+		if v.try > m.retries*2+2 {
+			if c := m.logger.Check(zap.DebugLevel, "max retry wait reached"); c != nil {
+				c.Write(
+					zap.String("subscription_id", k.subscriptionId),
+					zap.String("request_id", k.requestId),
+					zap.Any("metadata", v.metadata),
+				)
+			}
+			delete(m.subscribeRequest, k)
+			continue
+		}
+		if v.try > 1 && v.try <= m.retries+1 {
+			m.upstreamReqChan <- &NotifierRequest{
+				Operation:      "subscribe",
+				RequestId:      k.requestId,
+				SubscriptionId: k.subscriptionId,
+				Channels:       v.channels,
+				Credential:     v.credential,
+				Metadata:       v.metadata,
+			}
 		}
 	}
 }

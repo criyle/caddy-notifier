@@ -85,9 +85,28 @@ Backend endpoint are connected via WebSocket and responsible to authenticate sub
 
         metadata key "value"
         channel_category "regexp" "category"
+
+        keep_alive 10s # time duration for subscription to be resume
+        max_event_buffer_size 1024
+
+        subscribe_retries 3 # request will retry maximum 3 times for every 2 second
+        subscribe_try_interval 2s
     }
 }
 ```
+
+Because of the deduplication, some of the value will not update until full reload:
+
+- `metadata`
+- `channel_category`
+- `keep_alive`
+- `max_event_buffer_size`
+- `subscribe_retries`
+- `subscribe_try_interval`
+
+Other values will not be updated until reconnection of the websocket.
+
+If the retry is not enabled, the unresponsive requests will be removed after ~20s to avoid memory leak.
 
 Debug Log Hierarchy:
 

@@ -30,6 +30,9 @@ type upstream struct {
 	keepAlive          caddy.Duration
 	maxEventBufferSize int
 
+	subscribeRetries     int
+	subscribeTryInterval time.Duration
+
 	// upstreams
 	upstreamRespChan chan inboundMessage[NotifierResponse]
 	upstreamReqChan  chan *NotifierRequest
@@ -81,6 +84,8 @@ func getUpstream(upstreamUrl string, m *WebSocketNotifier) *upstream {
 	up.channelCategory = m.ChannelCategory
 	up.keepAlive = m.KeepAlive
 	up.maxEventBufferSize = m.MaxEventBufferSize
+	up.subscribeRetries = m.SubscribeRetries
+	up.subscribeTryInterval = time.Duration(m.SubscribeTryInterval)
 
 	if _, ok := upstreamMap[upstreamUrl]; !ok {
 		go up.upstreamMaintainer()
@@ -187,17 +192,27 @@ func (u *upstream) pumpMessage(w *upstreamWebSocket, logger *zap.Logger) {
 func (u *upstream) messageProcessor() {
 	logger := u.logger.Named("hub")
 	hub := newMessageHub(messageHubConfig{
+		logger:             logger,
 		upstreamReqChan:    u.upstreamReqChan,
 		metadata:           u.metadata,
 		channelCategory:    u.channelCategory,
 		keepAlive:          time.Duration(u.keepAlive),
 		maxEventBufferSize: u.maxEventBufferSize,
-		logger:             logger,
+		retries:            u.subscribeRetries,
 	})
 	defer hub.Close()
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+
+	var retryChan <-chan time.Time
+	if u.subscribeTryInterval > 0 {
+		retry_ticker := time.NewTicker(u.subscribeTryInterval)
+		defer retry_ticker.Stop()
+		retryChan = retry_ticker.C
+	} else {
+		retryChan = make(<-chan time.Time)
+	}
 
 	for {
 		select {
@@ -220,6 +235,12 @@ func (u *upstream) messageProcessor() {
 		case <-ticker.C:
 			hub.pruneSubscription()
 			updateMetrics(hub, u.upstream)
+			if u.subscribeTryInterval <= 0 {
+				hub.retrySubscribeRequests()
+			}
+
+		case <-retryChan:
+			hub.retrySubscribeRequests()
 		}
 	}
 }

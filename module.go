@@ -31,21 +31,23 @@ func init() {
 // controller service
 type WebSocketNotifier struct {
 	// Upstream address for the backend controller
-	Upstream           string            `json:"upstream,omitempty"`
-	WriteWait          caddy.Duration    `json:"write_wait,omitempty"`
-	PongWait           caddy.Duration    `json:"pong_wait,omitempty"`
-	PingInterval       caddy.Duration    `json:"ping_interval,omitempty"`
-	MaxMessageSize     int64             `json:"max_message_size,omitempty"`
-	ChanSize           int               `json:"chan_size,omitempty"`
-	RecoverWait        caddy.Duration    `json:"recover_wait,omitempty"`
-	Headers            *headers.Handler  `json:"headers,omitempty"`
-	Compression        string            `json:"compression,omitempty"`
-	ShortyResetCount   int               `json:"shorty_reset_count,omitempty"`
-	PingType           string            `json:"ping_type,omitempty"`
-	Metadata           map[string]string `json:"metadata,omitempty"`
-	ChannelCategory    []ChannelCategory `json:"channel_category,omitempty"`
-	KeepAlive          caddy.Duration    `json:"keep_alive,omitempty"`
-	MaxEventBufferSize int               `json:"max_event_buffer_size,omitempty"`
+	Upstream             string            `json:"upstream,omitempty"`
+	WriteWait            caddy.Duration    `json:"write_wait,omitempty"`
+	PongWait             caddy.Duration    `json:"pong_wait,omitempty"`
+	PingInterval         caddy.Duration    `json:"ping_interval,omitempty"`
+	MaxMessageSize       int64             `json:"max_message_size,omitempty"`
+	ChanSize             int               `json:"chan_size,omitempty"`
+	RecoverWait          caddy.Duration    `json:"recover_wait,omitempty"`
+	Headers              *headers.Handler  `json:"headers,omitempty"`
+	Compression          string            `json:"compression,omitempty"`
+	ShortyResetCount     int               `json:"shorty_reset_count,omitempty"`
+	PingType             string            `json:"ping_type,omitempty"`
+	Metadata             map[string]string `json:"metadata,omitempty"`
+	ChannelCategory      []ChannelCategory `json:"channel_category,omitempty"`
+	KeepAlive            caddy.Duration    `json:"keep_alive,omitempty"`
+	MaxEventBufferSize   int               `json:"max_event_buffer_size,omitempty"`
+	SubscribeRetries     int               `json:"subscribe_retries,omitempty"`
+	SubscribeTryInterval caddy.Duration    `json:"subscribe_try_interval,omitempty"`
 
 	// websocket upgrader
 	upgrader *websocket.Upgrader
@@ -153,11 +155,17 @@ func (m *WebSocketNotifier) Validate() error {
 	if m.PingInterval > m.PongWait {
 		return fmt.Errorf("ping_interval > pong_wait: %v > %v", m.PingInterval, m.PongWait)
 	}
+	if m.WriteWait > m.PingInterval {
+		return fmt.Errorf("write_wait > ping_interval: %v > %v", m.WriteWait, m.PingInterval)
+	}
 	if m.Compression != "permessage-deflate" && m.Compression != "shorty" && m.Compression != "off" && m.Compression != "" {
 		return fmt.Errorf("bad compression value: %s", m.Compression)
 	}
 	if m.PingType != "control" && m.PingType != "text" && m.PingType != "" {
 		return fmt.Errorf("bad ping type value: %s", m.PingType)
+	}
+	if m.SubscribeRetries > 0 && m.SubscribeTryInterval <= 0 {
+		return fmt.Errorf("subscribe_retries > 0 while subscribe_try_interval not set: %d %v", m.SubscribeRetries, m.SubscribeTryInterval)
 	}
 	return nil
 }
@@ -220,6 +228,8 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 //	  metadata				<key>	<replacement>
 //	  channel_category		<regexp>	category
 //	  keep_alive			<interval>
+//	  subscribe_retries		<retries>
+//	  subscribe_try_interval	<interval>
 //	}
 func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // consume directive name
@@ -438,6 +448,26 @@ func (m *WebSocketNotifier) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Errf("bad size value %s: %v", d.Val(), err)
 			}
 			m.MaxEventBufferSize = size
+
+		case "subscribe_retries":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			size, err := strconv.Atoi(d.Val())
+			if err != nil {
+				return d.Errf("bad subscribe_retries value %s: %v", d.Val(), err)
+			}
+			m.SubscribeRetries = size
+
+		case "subscribe_try_interval":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			dur, err := caddy.ParseDuration(d.Val())
+			if err != nil {
+				return d.Errf("bad duration value %s: %v", d.Val(), err)
+			}
+			m.SubscribeTryInterval = caddy.Duration(dur)
 
 		default:
 			return d.Errf("unrecognized subdirective %s", d.Val())
