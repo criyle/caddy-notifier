@@ -53,9 +53,10 @@ type WebSocketNotifier struct {
 	upgrader *websocket.Upgrader
 
 	// module related config
-	ctx             caddy.Context
-	logger          *zap.Logger
-	websocketConfig *websocketConfig
+	ctx              caddy.Context
+	logger           *zap.Logger
+	subscriberLogger *zap.Logger
+	websocketConfig  *websocketConfig
 
 	// upstream
 	upstream *upstream
@@ -127,6 +128,7 @@ func (m *WebSocketNotifier) Provision(ctx caddy.Context) error {
 
 	m.ctx = ctx
 	m.logger = ctx.Logger()
+	m.subscriberLogger = m.logger.Named("subscriber")
 	m.websocketConfig = &websocketConfig{
 		writeWait:        writeWait,
 		pongWait:         pongWait,
@@ -187,7 +189,7 @@ func (m *WebSocketNotifier) ServeHTTP(w http.ResponseWriter, r *http.Request, ne
 
 	// if search parameter have shorty=on, turn on shorty on this connection
 	config := *m.websocketConfig
-	config.logger = m.logger.Named("subscriber." + conn.RemoteAddr().String())
+	config.logger = m.subscriberLogger.With(zap.String("remote_addr", conn.RemoteAddr().String()))
 	config.shorty = len(r.URL.Query().Get("shorty")) > 0
 	config.replacer = repl
 

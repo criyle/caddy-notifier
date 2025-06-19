@@ -105,7 +105,7 @@ If the retry is not enabled, the unresponsive requests will be removed after ~20
 Debug Log Hierarchy:
 
 - http.handlers.websocket_notifier
-  - subscriber.{remote_addr}:{remote_port}
+  - subscriber {remote_addr}
   - upstream
     - maintainer
     - conn
