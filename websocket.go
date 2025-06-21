@@ -25,6 +25,8 @@ type webSocket[T any] struct {
 	err          error
 	done         <-chan struct{}
 	id           string
+	textPong     chan struct{}
+	pingTicker   *time.Ticker
 }
 
 type inboundMessage[T any] struct {
@@ -65,6 +67,8 @@ func newWebSocket[T any](conn *websocket.Conn, inboundChan chan<- inboundMessage
 		config:       conf,
 		done:         done,
 		id:           conn.RemoteAddr().String(),
+		textPong:     make(chan struct{}, 1),
+		pingTicker:   time.NewTicker(conf.pingInterval),
 	}
 	go w.readLoop(done, inboundChan)
 	go w.writeLoop(done, outC)
@@ -105,9 +109,10 @@ func (w *webSocket[T]) readLoop(done chan struct{}, inboundChan chan<- inboundMe
 			websocketInboundBytes.Add(int64(len(data)))
 		}
 		w.conn.SetReadDeadline(time.Now().Add(w.config.pongWait))
+		w.pingTicker.Reset(w.config.pingInterval)
 		// ignore ping
 		if bytes.Equal(data, []byte("ping")) {
-			w.conn.WriteMessage(websocket.TextMessage, []byte("pong"))
+			w.textPong <- struct{}{}
 			continue
 		}
 		// update deadline with pong
@@ -142,9 +147,8 @@ func (w *webSocket[T]) readLoop(done chan struct{}, inboundChan chan<- inboundMe
 }
 
 func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outboundMessage) {
-	ticker := time.NewTicker(w.config.pingInterval)
 	defer func() {
-		ticker.Stop()
+		w.pingTicker.Stop()
 		w.conn.Close()
 	}()
 
@@ -203,7 +207,7 @@ func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outbound
 				}
 			}
 
-		case <-ticker.C:
+		case <-w.pingTicker.C:
 			w.conn.SetWriteDeadline(time.Now().Add(w.config.writeWait))
 			if err := w.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				if c := w.config.logger.Check(zap.DebugLevel, "ws ping error"); c != nil {
@@ -218,6 +222,15 @@ func (w *webSocket[T]) writeLoop(done chan struct{}, outboundChan chan *outbound
 					}
 					return
 				}
+			}
+
+		case <-w.textPong:
+			w.conn.SetWriteDeadline(time.Now().Add(w.config.writeWait))
+			if err := w.conn.WriteMessage(websocket.TextMessage, []byte("pong")); err != nil {
+				if c := w.config.logger.Check(zap.DebugLevel, "ws pong error"); c != nil {
+					c.Write(zap.Error(err))
+				}
+				return
 			}
 
 		case <-done:
