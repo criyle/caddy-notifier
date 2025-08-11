@@ -172,6 +172,7 @@ If a connection disconnected from the notifier, and it tries to reconnect, the s
     "request_id": "request id sent previously",
     "accept": ["a list of channel_name"],
     "reject": ["a list of channel_name"],
+    "message": "reason for reject",
     "resume_token": "resume_token"
 }
 ```
@@ -267,6 +268,7 @@ The caddy-notifier sends `resume` with list of channels that have been subscribe
     "operation": "verify",
     "accept": ["a list of channel_name of accepted channels"],
     "reject": ["a list of channel_name of rejected channels"],
+    "message": "reason for reject"
 }
 ```
 

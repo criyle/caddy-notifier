@@ -22,6 +22,7 @@ type SubscriberResponse struct {
 	Channels    []string        `json:"channels,omitempty"`
 	Accept      []string        `json:"accept,omitempty"`
 	Reject      []string        `json:"reject,omitempty"`
+	Message     string          `json:"message,omitempty"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	ResumeToken string          `json:"resume_token,omitempty"`
 	Seq         uint64          `json:"seq,omitempty"`
@@ -45,6 +46,7 @@ type NotifierResponse struct {
 	Channels       []string        `json:"channels,omitempty"`
 	Accept         []string        `json:"accept,omitempty"`
 	Reject         []string        `json:"reject,omitempty"`
+	Message        string          `json:"message,omitempty"`
 	Payload        json.RawMessage `json:"payload,omitempty"`
 	Credential     string          `json:"credential,omitempty"`
 }

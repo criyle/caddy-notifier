@@ -412,6 +412,7 @@ func (m *messageHub) handleUpstreamResp(v inboundMessage[NotifierResponse]) {
 				RequestId:   v.value.RequestId,
 				Accept:      v.value.Accept,
 				Reject:      v.value.Reject,
+				Message:     v.value.Message,
 				ResumeToken: sub.token,
 			},
 		})
